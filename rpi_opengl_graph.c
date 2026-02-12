@@ -48,7 +48,7 @@
 #define NORM_XMAX       1.0
 #define NORM_YMIN      -1.0
 #define NORM_YMAX       1.0
-#define TRACE_YMAX      2.0     // Max analog value for each trace
+#define TRACE_YMAX      3.5     // Max analog value for each trace
 #define GRID_DIVS       10,8    // Number of divisions in grid
 #define CLEAR_COLOUR    0.8, 0.82, 0.8, 0.0 // Normalised background colour
 #define MAX_VALS        10000   // Maximum number of I/P values
