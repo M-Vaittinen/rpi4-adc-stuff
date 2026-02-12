@@ -95,6 +95,8 @@
 #define SPI_DMA_EN      (1 << 8)
 #define SPI_AUTO_CS     (1 << 11)
 #define SPI_RXD         (1 << 17)
+#define SPI_CPOL	(1 << 3)
+#define SPI_CPHA	(1 << 2)
 #define SPI_CE0         0
 #define SPI_CE1         1
 
@@ -363,7 +365,7 @@ float test_spi_frequency(MEM_MAP *mp)
     *REG32(spi_regs, SPI_CS) = SPI_FIFO_CLR;                // Clear SPI FIFOs
     start_dma(mp, DMA_CHAN_A, &dp->cbs[0], 0);              // Start SPI Tx DMA
     *REG32(spi_regs, SPI_DLEN) = (TEST_NSAMPS + 2) * 4;     // Set data length, and SPI flags
-    *REG32(spi_regs, SPI_CS) = SPI_TFR_ACT | SPI_DMA_EN;
+    *REG32(spi_regs, SPI_CS) = SPI_TFR_ACT | SPI_DMA_EN | SPI_CPHA | SPI_CPOL;
     dma_wait(DMA_CHAN_A);                                   // Wait until complete
     *REG32(spi_regs, SPI_CS) = SPI_FIFO_CLR;                // Clear accumulated Rx data
     return(dp->usecs[1] > dp->usecs[0] ?
@@ -408,7 +410,7 @@ void adc_dma_init(MEM_MAP *mp, int nsamp, int single)
     ADC_DMA_DATA *dp=mp->virt;
     ADC_DMA_DATA dma_data = {
         .samp_size = 2, .pwm_val = pwm_range, .txd={0xd0, in_chans>1 ? 0xf0 : 0xd0},
-        .adc_csd = SPI_TFR_ACT | SPI_AUTO_CS | SPI_DMA_EN | SPI_FIFO_CLR | ADC_CE_NUM,
+        .adc_csd = SPI_TFR_ACT | SPI_AUTO_CS | SPI_DMA_EN | SPI_FIFO_CLR | ADC_CE_NUM | SPI_CPHA | SPI_CPOL,
         .usecs = {0, 0}, .states = {0, 0}, .rxd1 = {0}, .rxd2 = {0},
         .cbs = {
         // Rx input: read data from usec clock and SPI, into 2 ping-pong buffers
@@ -542,7 +544,7 @@ int spi_tx_test(MEM_MAP *mp, uint16_t *buff, int nsamp)
     for (n=0; n<nsamp; n++)
     {
         *REG32(spi_regs, SPI_DLEN) = 2;
-        *REG32(spi_regs, SPI_CS) = SPI_TFR_ACT | SPI_AUTO_CS | SPI_DMA_EN | SPI_FIFO_CLR;
+        *REG32(spi_regs, SPI_CS) = SPI_TFR_ACT | SPI_AUTO_CS | SPI_DMA_EN | SPI_FIFO_CLR | SPI_CPHA | SPI_CPOL;
         *REG32(spi_regs, SPI_FIFO) = n;
         usleep(5);
         a += *REG32(spi_regs, SPI_FIFO);
