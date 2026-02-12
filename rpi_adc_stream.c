@@ -31,7 +31,7 @@
 
 #define VERSION "0.20"
 
-#define SAMPLE_RATE     100     // Default & max sample rate (samples/sec)
+#define SAMPLE_RATE     100000     // Default & max sample rate (samples/sec)
 #define MAX_SAMPLE_RATE 1000000
 
 // PWM definitions: divisor, and reload value
@@ -72,7 +72,7 @@
 // SPI clock frequency
 #define MIN_SPI_FREQ    10000
 #define MAX_SPI_FREQ    20000000
-#define SPI_FREQ        1000000
+#define SPI_FREQ        2000000
 
 // SPI 0 pin definitions
 #define SPI0_CE0_PIN    8
@@ -160,6 +160,9 @@ int main(int argc, char *argv[])
 {
     int args=0, f, val=0;
     float freq;
+
+    sample_count = MAX_SAMPS;
+    fifo_name = "/tmp/adc.fifo";
 
     printf("RPi ADC streamer v" VERSION "\n");
     while (argc > ++args)               // Process command-line args
