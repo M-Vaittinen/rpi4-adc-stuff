@@ -37,7 +37,7 @@
 #define FIFO            "/tmp/adc.fifo"
 //#define WIN_SIZE        640, 480
 #define MAX_CHANS       16      // Max number of I/P chans
-#define NUM_CHANS       2       // Default number of I/P chans
+#define NUM_CHANS       1       // Default number of I/P chans
 #define GRID_CHAN       0       // Channel num used by grid
 #define TRACE1_CHAN     1       // Channel num used by first trace
 #define MAX_TRACES      (TRACE1_CHAN + MAX_CHANS)
