@@ -16,7 +16,7 @@
 //
 
 // Raspberry Pi hardware version (0 to 4)
-#define RPI_VERSION     0
+#define RPI_VERSION     4
 
 #if RPI_VERSION == 0
 #define PHYS_REG_BASE   PI_01_REG_BASE
