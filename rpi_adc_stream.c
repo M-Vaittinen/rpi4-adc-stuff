@@ -32,7 +32,7 @@
 #define VERSION "0.20"
 
 #define SAMPLE_RATE     100     // Default & max sample rate (samples/sec)
-#define MAX_SAMPLE_RATE 50000
+#define MAX_SAMPLE_RATE 1000000
 
 // PWM definitions: divisor, and reload value
 #define PWM_FREQ        1000000
@@ -71,7 +71,7 @@
 
 // SPI clock frequency
 #define MIN_SPI_FREQ    10000
-#define MAX_SPI_FREQ    1000000
+#define MAX_SPI_FREQ    20000000
 #define SPI_FREQ        1000000
 
 // SPI 0 pin definitions
