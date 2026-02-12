@@ -33,7 +33,7 @@
 #elif RPI_VERSION==4
 #define PHYS_REG_BASE   PI_4_REG_BASE
 #define CLOCK_HZ        375000000
-#define SPI_CLOCK_HZ    200000000
+#define SPI_CLOCK_HZ    500000000
 #endif
 
 // Location of peripheral registers in physical memory
