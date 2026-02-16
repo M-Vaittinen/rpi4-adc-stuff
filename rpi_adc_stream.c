@@ -127,9 +127,20 @@ int fifo_fd;
 #define FMT_USEC        1
 
 // Command-line variables
-int in_chans=1, sample_count=0, sample_rate=SAMPLE_RATE;
-int data_format, testmode, verbose, lockstep;
-uint32_t pwm_range, samp_total, overrun_total, fifo_size;
+static int in_chans = 1;
+static int sample_count = 0;
+static int sample_rate = SAMPLE_RATE;
+
+static int data_format;
+static int testmode;
+static int verbose;
+static int lockstep;
+
+static uint32_t pwm_range;
+static uint32_t samp_total;
+static uint32_t fifo_size;
+static uint32_t overrun_total;
+
 char *fifo_name;
 
 void terminate(int sig);
@@ -157,7 +168,7 @@ void disp_spi(void);
 // Main program
 int main(int argc, char *argv[])
 {
-    int args=0, f, val=0;
+    int args=0, f;
     float freq;
 
     sample_count = MAX_SAMPS;
