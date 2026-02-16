@@ -135,7 +135,6 @@ char *fifo_name;
 void terminate(int sig);
 void map_devices(void);
 void get_uncached_mem(MEM_MAP *mp, int size);
-int adc_get_sample(int chan);
 float test_pwm_frequency(MEM_MAP *mp);
 float test_spi_frequency(MEM_MAP *mp);
 void adc_dma_init(MEM_MAP *mp, int ns, int single);
@@ -152,8 +151,6 @@ uint32_t fifo_freespace(int fd);
 void destroy_fifo(char *fname, int fd);
 int init_spi(int hz);
 void spi_clear(void);
-void spi_cs(int set);
-void spi_xfer(uint8_t *txd, uint8_t *rxd, int len);
 void spi_disable(void);
 void disp_spi(void);
 
@@ -238,12 +235,6 @@ int main(int argc, char *argv[])
         freq = test_pwm_frequency(&vc_mem);
         printf("%7.3f Hz\n", freq);
     }
-    else if (sample_count == 0)
-    {
-        printf("SPI frequency %u Hz\n", f);
-        val = adc_get_sample(0);
-        printf("ADC value %u = %4.3fV\n", val, ADC_VOLTAGE(val));
-    }
     else if (fifo_name)
     {
         if (create_fifo(fifo_name))
@@ -316,24 +307,6 @@ void map_devices(void)
 {
     if (!map_uncached_mem(mp, size))
         fail("Error: can't allocate uncached memory\n");
-}
-
-// Fetch single sample from ADC channel 0 or 1
-int adc_get_sample(int chan)
-{
-    uint8_t txdata[ADC_RAW_LEN] = ADC_REQUEST(chan > 0);
-    uint8_t rxdata[ADC_RAW_LEN];
-
-    spi_cs(1);
-    spi_xfer(txdata, rxdata, sizeof(txdata));
-    spi_cs(0);
-    if (verbose)
-    {
-        for (int i=0; i<ADC_RAW_LEN; i++)
-            printf("%02X ", rxdata[i]);
-        printf("\n");
-    }
-    return(ADC_RAW_VAL(*(uint16_t *)rxdata));
 }
 
 // Definitions for SPI frequency test
@@ -644,25 +617,6 @@ int init_spi(int hz)
 void spi_clear(void)
 {
     *REG32(spi_regs, SPI_CS) = SPI_FIFO_CLR;
-}
-
-// Set / clear SPI chip select
-void spi_cs(int set)
-{
-    uint32_t csval = *REG32(spi_regs, SPI_CS);
-
-    *REG32(spi_regs, SPI_CS) = set ? csval | 0x80 : csval & ~0x80;
-}
-
-// Transfer SPI bytes
-void spi_xfer(uint8_t *txd, uint8_t *rxd, int len)
-{
-    while (len--)
-    {
-        *REG8(spi_regs, SPI_FIFO) = *txd++;
-        while((*REG32(spi_regs, SPI_CS) & (1<<17)) == 0) ;
-        *rxd++ = *REG32(spi_regs, SPI_FIFO);
-    }
 }
 
 // Disable SPI
