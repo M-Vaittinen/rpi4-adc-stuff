@@ -101,17 +101,17 @@
 #define SPI_CE1         1
 
 // SPI register strings
-char *spi_regstrs[] = {"CS", "FIFO", "CLK", "DLEN", "LTOH", "DC", ""};
+static char *g_spi_regstrs[] = {"CS", "FIFO", "CLK", "DLEN", "LTOH", "DC", ""};
 
 // Microsecond timer
 #define USEC_BASE       (PHYS_REG_BASE + 0x3000)
 #define USEC_TIME       0x04
-uint32_t usec_start;
+static uint32_t g_usec_start;
 
 // Buffer for streaming output, and raw Rx data
 #define STREAM_BUFFLEN  10000
-char stream_buff[STREAM_BUFFLEN];
-uint32_t rx_buff[MAX_SAMPS];
+static char g_stream_buff[STREAM_BUFFLEN];
+static uint32_t g_rx_buff[MAX_SAMPS];
 
 // fcntl constant to get free FIFO length
 #define F_GETPIPE_SZ    1032
@@ -121,27 +121,27 @@ extern MEM_MAP gpio_regs, dma_regs, clk_regs, pwm_regs;
 MEM_MAP vc_mem, spi_regs, usec_regs;
 
 // File descriptor for FIFO
-int fifo_fd;
+static int g_fifo_fd;
 
 // Data formats for -f option
 #define FMT_USEC        1
 
 // Command-line variables
-static int in_chans = 1;
-static int sample_count = 0;
-static int sample_rate = SAMPLE_RATE;
+static int g_in_chans = 1;
+static int g_sample_count = 0;
+static int g_sample_rate = SAMPLE_RATE;
 
-static int data_format;
-static int testmode;
-static int verbose;
-static int lockstep;
+static int g_data_format;
+static int g_testmode;
+static int g_verbose;
+static int g_lockstep;
 
-static uint32_t pwm_range;
-static uint32_t samp_total;
-static uint32_t fifo_size;
-static uint32_t overrun_total;
+static uint32_t g_pwm_range; /* TODO: Drop this. Change to local var, or compute in place */
+static uint32_t g_samp_total;
+static uint32_t g_fifo_size; /* TODO: Drop this */
+static uint32_t g_overrun_total;
 
-char *fifo_name;
+char *g_fifo_name;
 
 void terminate(int sig);
 void map_devices(void);
@@ -171,8 +171,8 @@ int main(int argc, char *argv[])
     int args=0, f;
     float freq;
 
-    sample_count = MAX_SAMPS;
-    fifo_name = "/tmp/adc.fifo";
+    g_sample_count = MAX_SAMPS;
+    g_fifo_name = "/tmp/adc.fifo";
 
     printf("RPi ADC streamer v" VERSION "\n");
     while (argc > ++args)               // Process command-line args
@@ -185,46 +185,46 @@ int main(int argc, char *argv[])
                 if (args>=argc-1 || !isdigit((int)argv[args+1][0]))
                     fprintf(stderr, "Error: no format value\n");
                 else
-                    data_format = atoi(argv[++args]);
+                    g_data_format = atoi(argv[++args]);
                 break;
             case 'I':                   // -I: number of input channels
                 if (args>=argc-1 || !isdigit((int)argv[args+1][0]))
                     fprintf(stderr, "Error: no input chan count\n");
                 else
-                    in_chans = atoi(argv[++args]);
+                    g_in_chans = atoi(argv[++args]);
                 break;
-            case 'L':                   // -L: lockstep streaming
-                lockstep = 1;
+            case 'L':                   // -L: g_lockstep streaming
+                g_lockstep = 1;
                 break;
             case 'N':                   // -N: number of samples per block
                 if (args>=argc-1 || !isdigit((int)argv[args+1][0]) ||
-                    (sample_count = atoi(argv[++args])) < 1)
+                    (g_sample_count = atoi(argv[++args])) < 1)
                     fprintf(stderr, "Error: no sample count\n");
-                else if (sample_count > MAX_SAMPS)
+                else if (g_sample_count > MAX_SAMPS)
                 {
                     fprintf(stderr, "Error: maximum sample count %u\n", MAX_SAMPS);
-                    sample_count = MAX_SAMPS;
+                    g_sample_count = MAX_SAMPS;
                 }
                 break;
             case 'R':                   // -R: sample rate (samples/sec)
                 if (args>=argc-1 || !isdigit((int)argv[args+1][0]))
                     fprintf(stderr, "Error: no sample rate\n");
-                else if (sample_rate > MAX_SAMPLE_RATE)
+                else if (g_sample_rate > MAX_SAMPLE_RATE)
                     fprintf(stderr, "Error: exceeded max sample rate\n");
                 else
-                    sample_rate = atoi(argv[++args]);
+                    g_sample_rate = atoi(argv[++args]);
                 break;
             case 'S':                   // -S: stream into named pipe (FIFO)
                 if (args>=argc-1 || !argv[args+1][0])
                     fprintf(stderr, "Error: no FIFO name\n");
                 else
-                    fifo_name = argv[++args];
+                    g_fifo_name = argv[++args];
                 break;
             case 'T':                   // -T: test mode
-                testmode = 1;
+                g_testmode = 1;
                 break;
-            case 'V':                   // -V: verbose mode (display hex data)
-                verbose = 1;
+            case 'V':                   // -V: g_verbose mode (display hex data)
+                g_verbose = 1;
                 break;
             default:
                 printf("Error: unrecognised option '%s'\n", argv[args]);
@@ -235,39 +235,39 @@ int main(int argc, char *argv[])
     map_devices();
     map_uncached_mem(&vc_mem, VC_MEM_SIZE);
     signal(SIGINT, terminate);
-    pwm_range = (PWM_FREQ * 2) / sample_rate;
+    g_pwm_range = (PWM_FREQ * 2) / g_sample_rate;
     f = init_spi(SPI_FREQ);
-    if (testmode)
+    if (g_testmode)
     {
         printf("Testing %1.3f MHz SPI frequency: ", f/1e6);
         freq = test_spi_frequency(&vc_mem);
         printf("%7.3f MHz\n", freq);
-        printf("Testing %5u Hz  PWM frequency: ", sample_rate);
+        printf("Testing %5u Hz  PWM frequency: ", g_sample_rate);
         freq = test_pwm_frequency(&vc_mem);
         printf("%7.3f Hz\n", freq);
     }
-    else if (fifo_name)
+    else if (g_fifo_name)
     {
-        if (create_fifo(fifo_name))
+        if (create_fifo(g_fifo_name))
         {
-            printf("Created FIFO '%s'\n", fifo_name);
+            printf("Created FIFO '%s'\n", g_fifo_name);
             printf("Streaming %u samples per block at %u S/s %s\n",
-                   sample_count, sample_rate, lockstep ? "(lockstep)" : "");
-            adc_dma_init(&vc_mem, sample_count, 0);
+                   g_sample_count, g_sample_rate, g_lockstep ? "(g_lockstep)" : "");
+            adc_dma_init(&vc_mem, g_sample_count, 0);
             adc_stream_start();
             while (1)
-                do_streaming(&vc_mem, stream_buff, STREAM_BUFFLEN, sample_count);
+                do_streaming(&vc_mem, g_stream_buff, STREAM_BUFFLEN, g_sample_count);
         }
     }
     else
     {
-        printf("Reading %u samples at %u S/s\n", sample_count, sample_rate);
-        adc_dma_init(&vc_mem, sample_count, 1);
+        printf("Reading %u samples at %u S/s\n", g_sample_count, g_sample_rate);
+        adc_dma_init(&vc_mem, g_sample_count, 1);
         adc_stream_start();
         adc_stream_wait();
         adc_stream_stop();
-        adc_stream_csv(&vc_mem, stream_buff, STREAM_BUFFLEN, sample_count);
-        printf("%s", stream_buff);
+        adc_stream_csv(&vc_mem, g_stream_buff, STREAM_BUFFLEN, g_sample_count);
+        printf("%s", g_stream_buff);
     }
     terminate(0);
 }
@@ -294,10 +294,10 @@ void terminate(int sig)
     unmap_periph_mem(&spi_regs);
     unmap_periph_mem(&dma_regs);
     unmap_periph_mem(&gpio_regs);
-    if (fifo_name)
-        destroy_fifo(fifo_name, fifo_fd);
-    if (samp_total)
-        printf("Total samples %u, overruns %u\n", samp_total, overrun_total);
+    if (g_fifo_name)
+        destroy_fifo(g_fifo_name, g_fifo_fd);
+    if (g_samp_total)
+        printf("Total samples %u, overruns %u\n", g_samp_total, g_overrun_total);
     exit(0);
 }
 
@@ -361,7 +361,7 @@ float test_pwm_frequency(MEM_MAP *mp)
 {
     TEST_DMA_DATA *dp=mp->virt;
     TEST_DMA_DATA dma_data = {
-        .val = pwm_range, .usecs = {0, 0},
+        .val = g_pwm_range, .usecs = {0, 0},
         .cbs = {
         // Tx output: 2 initial transfers, then timed transfer
             {PWM_TI, MEM(mp, &dp->val),         REG(pwm_regs, PWM_FIF1), 4, 0, CBS(1), 0}, // 0
@@ -373,7 +373,7 @@ float test_pwm_frequency(MEM_MAP *mp)
     };
     memcpy(dp, &dma_data, sizeof(dma_data));                // Copy DMA data into uncached memory
     *REG32(spi_regs, SPI_DC) = (8<<24)|(1<<16)|(8<<8)|1;    // Set DMA priorities
-    init_pwm(PWM_FREQ, pwm_range, PWM_VALUE);               // Initialise PWM
+    init_pwm(PWM_FREQ, g_pwm_range, PWM_VALUE);               // Initialise PWM
     *REG32(pwm_regs, PWM_DMAC) = PWM_DMAC_ENAB | PWM_ENAB;  // Enable PWM DMA
     start_dma(mp, DMA_CHAN_A, &dp->cbs[0], 0);              // Start DMA
     start_pwm();                                            // Start PWM
@@ -393,7 +393,7 @@ void adc_dma_init(MEM_MAP *mp, int nsamp, int single)
 {
     ADC_DMA_DATA *dp=mp->virt;
     ADC_DMA_DATA dma_data = {
-        .samp_size = 2, .pwm_val = pwm_range, .txd={0xd0, in_chans>1 ? 0xf0 : 0xd0},
+        .samp_size = 2, .pwm_val = g_pwm_range, .txd={0xd0, g_in_chans>1 ? 0xf0 : 0xd0},
         .adc_csd = SPI_TFR_ACT | SPI_AUTO_CS | SPI_DMA_EN | SPI_FIFO_CLR | ADC_CE_NUM | SPI_CPHA | SPI_CPOL,
         .usecs = {0, 0}, .states = {0, 0}, .rxd1 = {0}, .rxd2 = {0},
         .cbs = {
@@ -415,7 +415,7 @@ void adc_dma_init(MEM_MAP *mp, int nsamp, int single)
     if (single)                                 // If single-shot, stop after first Rx block
         dma_data.cbs[2].next_cb = 0;
     memcpy(dp, &dma_data, sizeof(dma_data));    // Copy DMA data into uncached memory
-    init_pwm(PWM_FREQ, pwm_range, PWM_VALUE);   // Initialise PWM, with DMA
+    init_pwm(PWM_FREQ, g_pwm_range, PWM_VALUE);   // Initialise PWM, with DMA
     *REG32(pwm_regs, PWM_DMAC) = PWM_DMAC_ENAB | PWM_ENAB;
     *REG32(spi_regs, SPI_DC) = (8<<24) | (1<<16) | (8<<8) | 1;  // Set DMA priorities
     *REG32(spi_regs, SPI_CS) = SPI_FIFO_CLR;                    // Clear SPI FIFOs
@@ -429,23 +429,23 @@ void do_streaming(MEM_MAP *mp, char *vals, int maxlen, int nsamp)
 {
     int n;
 
-    if (!fifo_fd)
+    if (!g_fifo_fd)
     {
-        if ((fifo_fd = open_fifo_write(fifo_name)) > 0)
+        if ((g_fifo_fd = open_fifo_write(g_fifo_name)) > 0)
         {
-            printf("Started streaming to FIFO '%s'\n", fifo_name);
-            fifo_size = fifo_freespace(fifo_fd);
+            printf("Started streaming to FIFO '%s'\n", g_fifo_name);
+            g_fifo_size = fifo_freespace(g_fifo_fd);
         }
     }
-    if (fifo_fd)
+    if (g_fifo_fd)
     {
         if ((n=adc_stream_csv(mp, vals, maxlen, nsamp)) > 0)
         {
-            if (!write_fifo(fifo_fd, vals, n))
+            if (!write_fifo(g_fifo_fd, vals, n))
             {
                 printf("Stopped streaming\n");
-                close(fifo_fd);
-                fifo_fd = 0;
+                close(g_fifo_fd);
+                g_fifo_fd = 0;
                 usleep(100000);
             }
         }
@@ -473,7 +473,7 @@ void adc_stream_stop(void)
 }
 
 // Fetch samples from ADC buffer, return comma-delimited integer values
-// If in lockstep mode, discard new data if FIFO isn't empty
+// If in g_lockstep mode, discard new data if FIFO isn't empty
 int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp)
 {
     ADC_DMA_DATA *dp=mp->virt;
@@ -482,30 +482,30 @@ int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp)
     {
         if (dp->states[n])
         {
-            samp_total += nsamp;
-            memcpy(rx_buff, n ? (void *)dp->rxd2 : (void *)dp->rxd1, nsamp*4);
+            g_samp_total += nsamp;
+            memcpy(g_rx_buff, n ? (void *)dp->rxd2 : (void *)dp->rxd1, nsamp*4);
             usec = dp->usecs[n];
             if (dp->states[n^1])
             {
                 dp->states[0] = dp->states[1] = 0;
-                overrun_total++;
+                g_overrun_total++;
                 break;
             }
             dp->states[n] = 0;
-            if (usec_start == 0)
-                usec_start = usec;
-            if (!lockstep || fifo_freespace(fifo_fd)>=fifo_size)
+            if (g_usec_start == 0)
+                g_usec_start = usec;
+            if (!g_lockstep || fifo_freespace(g_fifo_fd)>=g_fifo_size)
             {
-                if (data_format == FMT_USEC)
-                    slen += sprintf(&vals[slen], "%u", usec-usec_start);
+                if (g_data_format == FMT_USEC)
+                    slen += sprintf(&vals[slen], "%u", usec-g_usec_start);
                 for (i=0; i<nsamp && slen+20<maxlen; i++)
                     slen += sprintf(&vals[slen], "%s%4.3f", slen ? "," : "",
-                        ADC_VOLTAGE(ADC_RAW_VAL(rx_buff[i])));
+                        ADC_VOLTAGE(ADC_RAW_VAL(g_rx_buff[i])));
                 slen += sprintf(&vals[slen], "\n");
-                if (verbose)
+                if (g_verbose)
                 {
                     for (int i=0; i<nsamp*4; i++)
-                        printf("%02X ", *(((uint8_t *)rx_buff)+i));
+                        printf("%02X ", *(((uint8_t *)g_rx_buff)+i));
                     printf("\n");
                 }
             }
@@ -643,8 +643,8 @@ void disp_spi(void)
     volatile uint32_t *p=REG32(spi_regs, SPI_CS);
     int i=0;
 
-    while (spi_regstrs[i][0])
-        printf("%-4s %08X ", spi_regstrs[i++], *p++);
+    while (g_spi_regstrs[i][0])
+        printf("%-4s %08X ", g_spi_regstrs[i++], *p++);
     printf("\n");
 }
 
