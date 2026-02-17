@@ -1,5 +1,5 @@
 CFLAGS=-Wall
-SRC=rpi_adc_stream.c rpi_dma_utils.c
+SRC=rpi_adc_stream.c rpi_dma_utils.c rpi_shmem.c
 OUT=rpi_adc_stream
 HDR=rpi_dma_utils.h
 DISPOUT=test-ui
