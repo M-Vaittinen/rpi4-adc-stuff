@@ -2,7 +2,7 @@ CC=gcc
 SRC=shmem.c ../rpi_shmem.c
 HDR=../rpi_shmem.h
 OUT=test
-CFLAGS=-Wall
+CFLAGS=-Wall -ggdb
 
 all: $(OUT)
 
