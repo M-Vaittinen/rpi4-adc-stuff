@@ -261,14 +261,65 @@ float test_pwm_frequency(MEM_MAP *mp)
 {
 	TEST_DMA_DATA *dp=mp->virt;
 	TEST_DMA_DATA dma_data = {
-		.val = g_pwm_range, .usecs = {0, 0},
+		.val = g_pwm_range,
+		.usecs = {0, 0},
 		.cbs = {
+/*
+	uint32_t ti;		// Transfer info
+	uint32_t srce_ad;	// Source address
+	uint32_t dest_ad;	// Destination address
+	uint32_t tfr_len;	// Transfer length
+	uint32_t stride;	// Transfer stride
+	uint32_t next_cb;	// Next control block
+	uint32_t debug;		// Debug register, zero in control block
+	uint32_t unused;
+	*/
 		// Tx output: 2 initial transfers, then timed transfer
-			{PWM_TI, MEM(mp, &dp->val),		 REG(pwm_regs, PWM_FIF1), 4, 0, CBS(1), 0}, // 0
-			{PWM_TI, MEM(mp, &dp->val),		 REG(pwm_regs, PWM_FIF1), 4, 0, CBS(2), 0}, // 1
-			{PWM_TI, REG(usec_regs, USEC_TIME), MEM(mp, &dp->usecs[0]),  4, 0, CBS(3), 0}, // 2
-			{PWM_TI, MEM(mp, &dp->val),		 REG(pwm_regs, PWM_FIF1), 4, 0, CBS(4), 0}, // 3
-			{PWM_TI, REG(usec_regs, USEC_TIME), MEM(mp, &dp->usecs[1]),  4, 0, 0,	  0}, // 4
+			{
+				.ti = PWM_TI,
+				.srce_ad = MEM(mp, &dp->val),
+				.dest_ad = REG(pwm_regs, PWM_FIF1),
+				.tfr_len = 4,
+				.stride = 0,
+				.next_cb = CBS(1),
+				.debug = 0
+			}, // 0
+			{
+				.ti = PWM_TI,
+				.srce_ad = MEM(mp, &dp->val),
+				.dest_ad = REG(pwm_regs, PWM_FIF1),
+				.tfr_len = 4,
+				.stride = 0,
+				.next_cb = CBS(2),
+				.debug = 0
+			}, // 1
+			{
+				.ti = PWM_TI,
+				.srce_ad = REG(usec_regs, USEC_TIME),
+				.dest_ad = MEM(mp, &dp->usecs[0]),
+				.tfr_len = 4,
+				.stride = 0,
+				.next_cb = CBS(3),
+				.debug = 0
+			}, // 2
+			{
+				.ti = PWM_TI,
+				.srce_ad = MEM(mp, &dp->val),
+				.dest_ad = REG(pwm_regs, PWM_FIF1),
+				.tfr_len = 4,
+				.stride = 0,
+				.next_cb = CBS(4),
+				.debug = 0
+			}, // 3
+			{
+				.ti = PWM_TI,
+				.srce_ad = REG(usec_regs, USEC_TIME),
+				.dest_ad = MEM(mp, &dp->usecs[1]),
+				.tfr_len = 4,
+				.stride = 0,
+				.next_cb = 0,
+				.debug = 0
+			}, // 4
 		}
 	};
 	memcpy(dp, &dma_data, sizeof(dma_data));				// Copy DMA data into uncached memory
@@ -284,8 +335,14 @@ float test_pwm_frequency(MEM_MAP *mp)
 
 typedef struct {
 	DMA_CB cbs[NUM_CBS];
-	uint32_t samp_size, pwm_val, adc_csd, txd[2];
-	volatile uint32_t usecs[2], states[2], rxd1[MAX_SAMPS], rxd2[MAX_SAMPS];
+	uint32_t samp_size;
+	uint32_t pwm_val;
+	uint32_t adc_csd;
+	uint32_t txd[2];
+	volatile uint32_t usecs[2];
+	volatile uint32_t states[2];
+	volatile uint32_t rxd1[MAX_SAMPS];
+	volatile uint32_t rxd2[MAX_SAMPS];
 } ADC_DMA_DATA;
 
 // Initialise PWM-paced DMA for ADC sampling
@@ -293,25 +350,112 @@ void adc_dma_init(MEM_MAP *mp, int nsamp, int single)
 {
 	ADC_DMA_DATA *dp=mp->virt;
 	ADC_DMA_DATA dma_data = {
-		.samp_size = 2, .pwm_val = g_pwm_range, .txd={0xd0, g_in_chans>1 ? 0xf0 : 0xd0},
-		.adc_csd = SPI_TFR_ACT | SPI_AUTO_CS | SPI_DMA_EN | SPI_FIFO_CLR | ADC_CE_NUM | SPI_CPHA | SPI_CPOL,
-		.usecs = {0, 0}, .states = {0, 0}, .rxd1 = {0}, .rxd2 = {0},
+		.samp_size = 2,
+		.pwm_val = g_pwm_range,
+		.txd={0xd0, g_in_chans>1 ? 0xf0 : 0xd0},
+		.adc_csd = SPI_TFR_ACT | SPI_AUTO_CS | SPI_DMA_EN |
+			   SPI_FIFO_CLR | ADC_CE_NUM | SPI_CPHA | SPI_CPOL,
+		.usecs = {0, 0},
+		.states = {0, 0},
+		.rxd1 = {0},
+		.rxd2 = {0},
 		.cbs = {
 		// Rx input: read data from usec clock and SPI, into 2 ping-pong buffers
-			{SPI_RX_TI, REG(usec_regs, USEC_TIME), MEM(mp, &dp->usecs[0]),  4, 0, CBS(1), 0}, // 0
-			{SPI_RX_TI, REG(spi_regs, SPI_FIFO),   MEM(mp, dp->rxd1), nsamp*4, 0, CBS(2), 0}, // 1
-			{SPI_RX_TI, REG(spi_regs, SPI_CS),	 MEM(mp, &dp->states[0]), 4, 0, CBS(3), 0}, // 2
-			{SPI_RX_TI, REG(usec_regs, USEC_TIME), MEM(mp, &dp->usecs[1]),  4, 0, CBS(4), 0}, // 3
-			{SPI_RX_TI, REG(spi_regs, SPI_FIFO),   MEM(mp, dp->rxd2), nsamp*4, 0, CBS(5), 0}, // 4
-			{SPI_RX_TI, REG(spi_regs, SPI_CS),	 MEM(mp, &dp->states[1]), 4, 0, CBS(0), 0}, // 5
+			{
+				.ti = SPI_RX_TI,
+				.srce_ad = REG(usec_regs, USEC_TIME),
+				.dest_ad = MEM(mp, &dp->usecs[0]),
+				.tfr_len = 4,
+				.stride = 0,
+				.next_cb = CBS(1),
+				.debug = 0
+			}, // 0
+			{
+				.ti = SPI_RX_TI,
+				.srce_ad = REG(spi_regs, SPI_FIFO),
+				.dest_ad = MEM(mp, dp->rxd1),
+				.tfr_len = nsamp*4,
+				.stride = 0,
+				.next_cb = CBS(2),
+				.debug = 0
+			}, // 1
+			{
+				.ti = SPI_RX_TI,
+				.srce_ad = REG(spi_regs, SPI_CS),
+				.dest_ad = MEM(mp, &dp->states[0]),
+				.tfr_len = 4,
+				.stride = 0,
+				.next_cb = CBS(3),
+				.debug = 0
+			}, // 2
+			{
+				.ti = SPI_RX_TI,
+				.srce_ad = REG(usec_regs, USEC_TIME),
+				.dest_ad = MEM(mp, &dp->usecs[1]),
+				.tfr_len = 4,
+				.stride = 0,
+				.next_cb = CBS(4),
+				.debug = 0
+			}, // 3
+			{
+				.ti = SPI_RX_TI,
+				.srce_ad = REG(spi_regs, SPI_FIFO),
+				.dest_ad = MEM(mp, dp->rxd2),
+				.tfr_len = nsamp*4,
+				.stride = 0,
+				.next_cb = CBS(5),
+				.debug = 0
+			}, // 4
+			{
+				.ti = SPI_RX_TI,
+				.srce_ad = REG(spi_regs, SPI_CS),
+				.dest_ad = MEM(mp, &dp->states[1]),
+				.tfr_len = 4,
+				.stride = 0,
+				.next_cb = CBS(0),
+				.debug = 0
+			}, // 5
 		// Tx output: 2 data writes to SPI for chan 0 & 1, or both chan 0
-			{SPI_TX_TI, MEM(mp, dp->txd),		  REG(spi_regs, SPI_FIFO), 8, 0, CBS(6), 0}, // 6
+			{
+				.ti = SPI_TX_TI,
+				.srce_ad = MEM(mp, dp->txd),
+				.dest_ad = REG(spi_regs, SPI_FIFO),
+				.tfr_len = 8,
+				.stride = 0,
+				.next_cb = CBS(6),
+				.debug = 0
+			}, // 6
 		// PWM ADC trigger: wait for PWM, set sample length, trigger SPI
-			{PWM_TI,	MEM(mp, &dp->pwm_val),	 REG(pwm_regs, PWM_FIF1), 4, 0, CBS(8), 0}, // 7
-			{PWM_TI,	MEM(mp, &dp->samp_size),   REG(spi_regs, SPI_DLEN), 4, 0, CBS(9), 0}, // 8
-			{PWM_TI,	MEM(mp, &dp->adc_csd),	 REG(spi_regs, SPI_CS),   4, 0, CBS(7), 0}, // 9
+			{
+				.ti = PWM_TI,
+				.srce_ad = MEM(mp, &dp->pwm_val),
+				.dest_ad = REG(pwm_regs, PWM_FIF1),
+				.tfr_len = 4,
+				.stride = 0,
+				.next_cb = CBS(8),
+				.debug = 0
+			}, // 7
+			{
+				.ti = PWM_TI,
+				.srce_ad = MEM(mp, &dp->samp_size),
+				.dest_ad = REG(spi_regs, SPI_DLEN),
+				.tfr_len = 4,
+				.stride = 0,
+				.next_cb = CBS(9),
+				.debug = 0
+			}, // 8
+			{
+				.ti = PWM_TI,
+				.srce_ad = MEM(mp, &dp->adc_csd),
+				.dest_ad = REG(spi_regs, SPI_CS),
+				.tfr_len = 4,
+				.stride = 0,
+				.next_cb = CBS(7),
+				.debug = 0
+			}, // 9
 		}
 	};
+
 	if (single)								 // If single-shot, stop after first Rx block
 		dma_data.cbs[2].next_cb = 0;
 	memcpy(dp, &dma_data, sizeof(dma_data));	// Copy DMA data into uncached memory
