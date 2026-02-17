@@ -1,20 +1,20 @@
 // Compile: gcc -o shm_server shm_server.c -lrt
 // Run: ./shm_server
 
+#include <errno.h>
+#include <fcntl.h>      // O_* constants
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <fcntl.h>      // O_* constants
 #include <sys/mman.h>   // shm_open, mmap
 #include <sys/stat.h>   // mode constants
 #include <unistd.h>
-#include <errno.h>
-
-#include <pthread.h>
 
 #include "rpi_shmem.h"
 
-pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
+//#include <pthread.h>
+//pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
 
 /* static struct g_shmem_info *g_i; */
 
