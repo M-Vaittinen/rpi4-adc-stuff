@@ -31,15 +31,22 @@ void shmem_close(struct shmem_info *info)
 	close(info->fd);
 }
 
-int shmem_open(const char *name, const size_t size, struct shmem_info *info)
+static int __shmem_open(const char *name, const size_t size, struct shmem_info *info, bool readonly)
 {
 	void *b;
 	int fd;
+	int map_flags = PROT_READ;
+	int openflags = O_RDONLY;
+
+	if (!readonly) {
+		map_flags |= PROT_WRITE;
+		openflags = O_RDWR;
+	}
 
 	if (!info)
 		return -EINVAL;
 
-	fd = shm_open(name, O_RDONLY, 0);
+	fd = shm_open(name, openflags, 0);
 	if (fd == -1) {
 		int err = errno;
 
@@ -48,7 +55,7 @@ int shmem_open(const char *name, const size_t size, struct shmem_info *info)
 		return (err) ? err : -1;
 	}
 
-	b = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
+	b = mmap(NULL, size, map_flags, MAP_SHARED, fd, 0);
 	if (b == MAP_FAILED) {
 		int err = errno;
 
@@ -65,6 +72,17 @@ int shmem_open(const char *name, const size_t size, struct shmem_info *info)
 
 	return 0;
 }
+
+int shmem_open(const char *name, const size_t size, struct shmem_info *info)
+{
+	return __shmem_open(name, size, info, false);
+}
+
+int shmem_open_ro(const char *name, const size_t size, struct shmem_info *info)
+{
+	return __shmem_open(name, size, info, true);
+}
+
 
 int shmem_create(const char *name, const size_t size, struct shmem_info *info)
 {
