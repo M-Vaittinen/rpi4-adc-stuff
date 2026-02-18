@@ -16,6 +16,9 @@
 //
 // v0.20 JPB 16/11/20 Tidied up for first Github release
 
+/* Uncomment this to prevent SHM clean-up at terminate */
+// #define KEEP_SHM_BUF
+
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -28,6 +31,8 @@
 #include <fcntl.h>
 #include <poll.h>
 
+#include "common.h"
+#include "mvaring.h"
 #include "rpi_dma_utils.h"
 #include "rpi_shmem.h"
 
@@ -54,7 +59,6 @@
 #define ADC_RAW_VAL(d)  (((uint16_t)(d)<<8 | (uint16_t)(d)>>8) & 0x7ff)
 
 // Non-cached memory size
-#define MAX_SAMPS	1024
 #define SAMP_SIZE	4
 #define BUFF_LEN	(MAX_SAMPS * SAMP_SIZE)
 #define MAX_BUFFS	2
@@ -113,7 +117,10 @@ static uint32_t g_usec_start;
 // Buffer for streaming output, and raw Rx data
 #define STREAM_BUFFLEN	10000
 static char g_stream_buff[STREAM_BUFFLEN];
-static uint32_t g_rx_buff[MAX_SAMPS];
+
+static struct adc_data g_tmp_data;
+
+static uint32_t *g_rx_buff = g_tmp_data.samples;
 
 // fcntl constant to get free FIFO length
 #define F_GETPIPE_SZ	1032
@@ -142,6 +149,11 @@ static uint32_t g_pwm_range; /* TODO: Drop this. Change to local var, or compute
 static uint32_t g_samp_total;
 static uint32_t g_fifo_size; /* TODO: Drop this */
 static uint32_t g_overrun_total;
+
+#define SHM_NAME "/RPI_ADC_BUFF"
+#define SHM_SIZE sizeof(struct mvaring)
+
+static struct shmem_info g_shm_info;
 
 char *g_fifo_name;
 
@@ -179,6 +191,11 @@ void terminate(int sig)
 		destroy_fifo(g_fifo_name, g_fifo_fd);
 	if (g_samp_total)
 		printf("Total samples %u, overruns %u\n", g_samp_total, g_overrun_total);
+
+#ifndef KEEP_SHM_BUF
+	if (g_shm_info.buff)
+		shmem_destroy(&g_shm_info);
+#endif
 	exit(0);
 }
 
@@ -348,7 +365,7 @@ typedef struct {
 // Initialise PWM-paced DMA for ADC sampling
 void adc_dma_init(MEM_MAP *mp, int nsamp, int single)
 {
-	ADC_DMA_DATA *dp=mp->virt;
+	ADC_DMA_DATA *dp = mp->virt;
 	ADC_DMA_DATA dma_data = {
 		.samp_size = 2,
 		.pwm_val = g_pwm_range,
@@ -474,15 +491,17 @@ uint32_t fifo_freespace(int fd)
 	return(fcntl(fd, F_GETPIPE_SZ));
 }
 
-int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp)
+
+int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvaring *mr)
 {
 	ADC_DMA_DATA *dp=mp->virt;
-	uint32_t i, n, usec, slen=0;
+	uint32_t /*i,*/ n, usec, slen=0;
 	for (n=0; n<2 && slen==0; n++)
 	{
 		if (dp->states[n])
 		{
 			g_samp_total += nsamp;
+			/* Copy data to adc_data struct */
 			memcpy(g_rx_buff, n ? (void *)dp->rxd2 : (void *)dp->rxd1, nsamp*4);
 			usec = dp->usecs[n];
 			if (dp->states[n^1])
@@ -494,6 +513,16 @@ int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp)
 			dp->states[n] = 0;
 			if (g_usec_start == 0)
 				g_usec_start = usec;
+
+			/* 32bit counter lasts around 71 minutes until wrapping */
+			if (g_data_format == FMT_USEC)
+				g_tmp_data.usecs = usec-g_usec_start;
+
+			ring_add(mr, &g_tmp_data);
+
+
+			/*
+			 * Drop the fifo.
 			if (!g_lockstep || fifo_freespace(g_fifo_fd)>=g_fifo_size)
 			{
 				if (g_data_format == FMT_USEC)
@@ -509,6 +538,7 @@ int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp)
 					printf("\n");
 				}
 			}
+			*/
 		}
 	}
 	vals[slen] = 0;
@@ -535,7 +565,7 @@ int write_fifo(int fd, void *data, int dlen)
 }
 
 // Manage streaming output
-void do_streaming(MEM_MAP *mp, char *vals, int maxlen, int nsamp)
+void do_streaming(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvaring *mr)
 {
 	int n;
 
@@ -549,7 +579,7 @@ void do_streaming(MEM_MAP *mp, char *vals, int maxlen, int nsamp)
 	}
 	if (g_fifo_fd)
 	{
-		if ((n=adc_stream_csv(mp, vals, maxlen, nsamp)) > 0)
+		if ((n=adc_stream_csv(mp, vals, maxlen, nsamp, mr)) > 0)
 		{
 			if (!write_fifo(g_fifo_fd, vals, n))
 			{
@@ -668,7 +698,9 @@ void disp_spi(void)
 // Main program
 int main(int argc, char *argv[])
 {
-	int args=0, f;
+	struct mvaring *mr;
+	int args=0;
+	int f, ret;
 	float freq;
 
 	g_sample_count = MAX_SAMPS;
@@ -732,6 +764,27 @@ int main(int argc, char *argv[])
 			}
 		}
 	}
+
+	/*
+	 * TODO: The reader could create the shm and the ring-buffer.
+	 * Here we would just call the shmem_open() and perform check: ring_is_ok()
+	 *
+	 * Benefit would be that the reader would be ready when we start writing,
+	 * which would give us clean drop-counters to start with.
+	 */
+
+	ret = shmem_create(SHM_NAME, SHM_SIZE, &g_shm_info);
+	if (ret) {
+		printf("shmem_create failed. Name %s, size %lu\n", SHM_NAME, (unsigned long)SHM_SIZE);
+		return ret;
+	}
+
+	mr = ring_init(g_shm_info.buff, SHM_SIZE);
+	if (!mr) {
+		printf("Ringbuffer init failed\n");
+		return -EINVAL;
+	}
+
 	map_devices();
 	map_uncached_mem(&vc_mem, VC_MEM_SIZE);
 	signal(SIGINT, terminate);
@@ -756,7 +809,7 @@ int main(int argc, char *argv[])
 			adc_dma_init(&vc_mem, g_sample_count, 0);
 			adc_stream_start();
 			while (1)
-				do_streaming(&vc_mem, g_stream_buff, STREAM_BUFFLEN, g_sample_count);
+				do_streaming(&vc_mem, g_stream_buff, STREAM_BUFFLEN, g_sample_count, mr);
 		}
 	}
 	else
@@ -766,7 +819,7 @@ int main(int argc, char *argv[])
 		adc_stream_start();
 		adc_stream_wait();
 		adc_stream_stop();
-		adc_stream_csv(&vc_mem, g_stream_buff, STREAM_BUFFLEN, g_sample_count);
+		adc_stream_csv(&vc_mem, g_stream_buff, STREAM_BUFFLEN, g_sample_count, mr);
 		printf("%s", g_stream_buff);
 	}
 	terminate(0);

@@ -1,7 +1,7 @@
 CFLAGS=-Wall
-SRC=rpi_adc_stream.c rpi_dma_utils.c rpi_shmem.c
+SRC=rpi_adc_stream.c rpi_dma_utils.c rpi_shmem.c mvaring.c
 OUT=rpi_adc_stream
-HDR=rpi_dma_utils.h
+HDR=rpi_dma_utils.h mvaring.h rpi_shmem.h common.h
 DISPOUT=test-ui
 DISPSRC=rpi_opengl_graph.c
 DISPLDFLAGS=-lm -lglut -lGLEW -lGL
