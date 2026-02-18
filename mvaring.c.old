@@ -1,0 +1,128 @@
+#include <errno.h>
+#include <stdio.h>
+#include <string.h> /* memcpy() */
+
+#include "mvaring.h"
+
+#ifndef barrier
+#define barrier() __asm__ __volatile__("": : :"memory")
+#endif
+
+bool ring_is_ok(struct mvaring *r)
+{
+	if (!r)
+		return false;
+
+	if (r->size < sizeof(struct mvaring))
+		return false;
+
+	if (r->version != MVARING_VERSION) {
+		printf("Bad version %u\n", (unsigned int)r->version);
+		return false;
+	}
+
+	return true;
+}
+
+struct mvaring * ring_init(void *buff, size_t bufsize)
+{
+	struct mvaring *r = buff;
+
+	if (!buff || sizeof(struct mvaring) > bufsize)
+		return NULL;
+
+	r->size = sizeof(struct mvaring);
+	r->version = MVARING_VERSION;
+	r->writing = r->windex = r->rindex = r->dropped = 0;
+
+	return r;
+}
+
+static void dbg_adcdata(struct adc_data *d)
+{
+	int i;
+
+	printf("Data: %u usecs samples:", d->usecs);
+	for (i = 0; i < 10; i++)
+		printf(" %d", d->samples[i]);
+	printf("\n");
+}
+
+void ring_add(struct mvaring *r, struct adc_data *data)
+{
+	uint32_t idx = r->windex & BUFF_MASK;
+	static int dbg = 1;
+
+	r->writing++;
+	barrier();
+
+	if (r->windex + 1 == r->rindex) {
+		r->dropped++;
+		r->rindex++;
+	}
+
+	if (dbg) {
+		printf("Copying %lu bytes\n", sizeof(struct adc_data));
+		dbg_adcdata(data);
+		dbg = 0;
+	}
+//	memmove(&r->buf[idx], data, sizeof(struct adc_data));
+	r->buf[idx] = *data;
+
+	r->windex++;
+	r->writing++;
+	barrier();
+}
+
+int ring_read(struct mvaring *r, struct adc_data *buf, unsigned int num_chunks)
+{
+	uint32_t tmp_num_chunks;
+	uint32_t windex, rindex;
+	uint32_t max_copy_size;
+	uint32_t copy_start;
+	uint32_t num_avail;
+	uint8_t wr;
+       
+again:
+	tmp_num_chunks = num_chunks;
+
+	/* Wait for write to complete */
+	barrier();
+	while ( (wr = r->writing) & 1)
+		barrier();
+
+	windex = r->windex;
+	rindex = r->rindex;
+
+	if (windex == rindex)
+		return -EAGAIN;
+
+	num_avail = windex - rindex;
+	if (num_avail < tmp_num_chunks)
+		tmp_num_chunks = num_avail;
+
+	copy_start = rindex & BUFF_MASK;
+	max_copy_size = NUM_DATA_CHUNKS - copy_start;
+	if (max_copy_size < tmp_num_chunks) {
+		uint32_t left = tmp_num_chunks - max_copy_size;
+
+		memcpy(buf, &r->buf[rindex], max_copy_size * sizeof(*buf));
+		memcpy(&buf[max_copy_size], &r->buf[0], left * sizeof(*buf));
+	} else {
+		memcpy(buf, &r->buf[rindex], tmp_num_chunks * sizeof(*buf));
+	}
+
+	barrier();
+	if (r->writing != wr)
+		goto again;
+
+	/* This is racy. Writer may increment r->index */
+	r->rindex = rindex + tmp_num_chunks;
+	barrier();
+	if (r->writing != wr)
+		printf("Sh could have happened\n");
+
+
+	return tmp_num_chunks;
+}
+

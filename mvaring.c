@@ -1,0 +1,148 @@
+// mvaring_ring.c
+#define _GNU_SOURCE
+#include <errno.h>
+#include <sched.h>
+#include <stdatomic.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#include "mvaring.h"
+
+struct mvaring * ring_init(void *buff, size_t bufsize)
+{
+	struct mvaring *r = buff;
+
+	if (!buff)
+		return NULL;
+
+	if (bufsize < sizeof(struct mvaring))
+		return NULL;
+
+	/* Clean the headroom */
+	memset(r, 0, offsetof(struct mvaring, buf) );
+
+	r->version = MVARING_VERSION;
+	r->size = sizeof(struct mvaring);
+
+	/* atomic indexes init */
+	atomic_init(&r->rindex, 0);
+	atomic_init(&r->windex, 0);
+	r->writing = 0;
+	r->dropped = 0;
+
+	return r;
+}
+
+bool ring_is_ok(struct mvaring *r)
+{
+	if (!r)
+		return false;
+
+	if (r->size < sizeof(struct mvaring))
+		return false;
+
+	if (r->version != MVARING_VERSION)
+		return false;
+
+	return true;
+}
+
+void ring_add(struct mvaring *r, const struct adc_data *data)
+{
+	unsigned w = atomic_load_explicit(&r->windex, memory_order_relaxed);
+	unsigned rd = atomic_load_explicit(&r->rindex, memory_order_acquire);
+
+	unsigned next_w = w + 1;
+	unsigned buf_idx = w & BUFF_MASK;
+
+	r->writing++;
+	atomic_thread_fence(memory_order_release);
+
+	if (next_w == rd + NUM_DATA_CHUNKS) {
+		/* buffer full -> drop oldest */
+		r->dropped++;
+		atomic_store_explicit(&r->rindex, rd + 1, memory_order_release);
+		rd = rd + 1;
+	}
+
+	memcpy(&r->buf[buf_idx], data, sizeof(*data));
+	atomic_thread_fence(memory_order_release);
+
+	/* publish new writer index */
+	atomic_store_explicit(&r->windex, next_w, memory_order_release);
+
+	r->writing++;
+	atomic_thread_fence(memory_order_release);
+}
+
+int ring_read(struct mvaring *r, struct adc_data *buf, unsigned int num_chunks)
+{
+	unsigned int tries = 0;
+	unsigned int w, rd, available, start, max_contig;
+	uint8_t seq1;
+
+	if (!r || !buf || num_chunks == 0)
+		return -EINVAL;
+
+retry:
+	seq1 = r->writing;
+	if (seq1 & 1) {
+		if (++tries < 1000) {
+			/*
+			 * TODO: Check if we need to spin here. Other option is
+			 * to just keep trying and forget the 'tries' -counter.
+			 *
+			 * I tried experimenting using sched_yield() and
+			 * SCHED_FIFO scheduled processes - and ended up to
+			 * deadlocking the system when I forced both processes to
+			 * the same core. I need to revise the scheduling if we
+			 * want to go that route.
+			 */
+			SPINAWHILE();
+			goto retry;
+		}
+
+		return -EAGAIN;
+	}
+
+	w = atomic_load_explicit(&r->windex, memory_order_acquire);
+	rd = atomic_load_explicit(&r->rindex, memory_order_relaxed);
+
+	available = w - rd;
+	if (available == 0)
+		return -EAGAIN;
+
+	if (num_chunks > available)
+		num_chunks = available;
+
+	start = rd & BUFF_MASK;
+	max_contig = NUM_DATA_CHUNKS - start;
+
+	if (max_contig >= num_chunks) {
+		memcpy(buf, &r->buf[start], num_chunks * sizeof(*buf));
+	} else {
+		/* wrap-around copy */
+		memcpy(buf, &r->buf[start], max_contig * sizeof(*buf));
+		memcpy(&buf[max_contig], &r->buf[0], (num_chunks - max_contig) * sizeof(*buf));
+	}
+
+	/* re-check sequence */
+	uint8_t seq2 = r->writing;
+	if (seq1 != seq2) {
+		/* writer updated while we read -> retry */
+		if (++tries < 1000) {
+			SPINAWHILE();
+			goto retry;
+		}
+		return -EAGAIN;
+	}
+
+	/* Commit consume by advancing rindex */
+	atomic_store_explicit(&r->rindex, rd + num_chunks, memory_order_release);
+
+	return (int)num_chunks;
+}
+

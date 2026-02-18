@@ -1,0 +1,37 @@
+#ifndef MVA_COMMON_H
+#define MVA_COMMON_H
+
+//#define BE_LAZY
+
+#define MAX_SAMPS	1024
+//#define MAX_SAMPS	32
+#define BUFF_MASK	0x1FFF
+//#define BUFF_MASK	0xFF
+//#define NUM_DATA_CHUNKS 0x1FFF 
+#define NUM_DATA_CHUNKS 0x2000 /* Power of 2 */
+//#define NUM_DATA_CHUNKS 0xFF /* Power of 2 */
+
+#if (NUM_DATA_CHUNKS & BUFF_MASK)
+#error "NUM_DATA_CHUNKS must be power of two"
+#endif
+
+#ifdef BE_LAZY
+
+#if defined(__i386__) || defined(__x86_64__)
+	#define SPINAWHILE() __asm__ __volatile__("pause" ::: "memory");
+
+#elif defined(__aarch64__) || defined(__arm__)
+	#if defined(__aarch64__) || (defined(__ARM_ARCH) && __ARM_ARCH >= 7)
+		#define SPINAWHILE() __asm__ __volatile__("yield" ::: "memory");
+	#else
+		#define SPINAWHILE() __asm__ __volatile__("" ::: "memory");
+	#endif
+#else
+	#define SPINAWHILE() __asm__ __volatile__("" ::: "memory");
+#endif
+
+#else // Don't be lazy but use tight busy loop
+	#define SPINAWHILE() sched_yield()
+#endif
+
+#endif
