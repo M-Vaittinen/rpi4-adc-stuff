@@ -151,14 +151,14 @@ typedef struct {
 
 // DMA control block (must be 32-byte aligned)
 typedef struct {
-    uint32_t ti,    // Transfer info
-        srce_ad,    // Source address
-        dest_ad,    // Destination address
-        tfr_len,    // Transfer length
-        stride,     // Transfer stride
-        next_cb,    // Next control block
-        debug,      // Debug register, zero in control block
-        unused;
+	uint32_t ti;		// Transfer info
+	uint32_t srce_ad;	// Source address
+	uint32_t dest_ad;	// Destination address
+	uint32_t tfr_len;	// Transfer length
+	uint32_t stride;	// Transfer stride
+	uint32_t next_cb;	// Next control block
+	uint32_t debug;		// Debug register, zero in control block
+	uint32_t unused;
 } DMA_CB __attribute__ ((aligned(32)));
 
 // PWM controller registers
