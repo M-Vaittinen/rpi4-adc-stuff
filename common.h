@@ -34,4 +34,8 @@
 	#define SPINAWHILE() sched_yield()
 #endif
 
+#ifndef ARRAY_SIZE
+#define ARRAY_SIZE(_arr) (sizeof(_arr)/sizeof(_arr[0]))
+#endif
+
 #endif

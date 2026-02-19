@@ -31,6 +31,7 @@
 #include <fcntl.h>
 #include <poll.h>
 
+#include "adc_common.h"
 #include "common.h"
 #include "mvaring.h"
 #include "rpi_dma_utils.h"
@@ -150,8 +151,6 @@ static uint32_t g_samp_total;
 static uint32_t g_fifo_size; /* TODO: Drop this */
 static uint32_t g_overrun_total;
 
-#define SHM_NAME "/RPI_ADC_BUFF"
-#define SHM_SIZE sizeof(struct mvaring)
 
 static struct shmem_info g_shm_info;
 
@@ -518,7 +517,10 @@ int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvarin
 			if (g_data_format == FMT_USEC)
 				g_tmp_data.usecs = usec-g_usec_start;
 
-			ring_add(mr, &g_tmp_data);
+			/* When ring is full, stop */
+			if (ring_add(mr, &g_tmp_data, true))
+				while(1)
+					sleep(10);
 
 
 			/*

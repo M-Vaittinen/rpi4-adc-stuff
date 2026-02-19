@@ -50,20 +50,43 @@ bool ring_is_ok(struct mvaring *r)
 	return true;
 }
 
-void ring_add(struct mvaring *r, const struct adc_data *data)
+int ring_add(struct mvaring *r, const struct adc_data *data, bool dropfull)
 {
 	unsigned w = atomic_load_explicit(&r->windex, memory_order_relaxed);
 	unsigned rd = atomic_load_explicit(&r->rindex, memory_order_acquire);
 
 	unsigned next_w = w + 1;
 	unsigned buf_idx = w & BUFF_MASK;
+	int ret = 0;
 
+	/*
+	 * TODO: Drop the seqlock as it is not really usefull in our use-case.
+	 * My original idea was to avoid atomic write/read indexes and to use
+	 * seqlock to protect the data integrity. This, however, feels now like
+	 * a bad idea.
+	 *
+	 * 1. Implementing the read-index update by both writer (when ring is
+	 *    full) and by reader (when entries are read) without locks/atomics
+	 *    gets tricky. I am not in a mood for tricky it seems.
+	 *
+	 * 2. We have very frequent writer, writing smallish chunks of data,
+	 *    and probably a slower reader (reading larger chunks of data).
+	 *    This means our writer is frequently reserving the seqlock for a
+	 *    short period at a time. This increases chances that a slower
+	 *    reader will need to perfor re-read(s). seqlock would work better
+	 *    for writer adding large chuncks - spending longer time fetching
+	 *    the data - and fast reader finishing the reads quickly enough to
+	 *    keep chances of seqlock to be updated during the read low.
+	 */
 	r->writing++;
 	atomic_thread_fence(memory_order_release);
 
 	if (next_w == rd + NUM_DATA_CHUNKS) {
 		/* buffer full -> drop oldest */
 		r->dropped++;
+		ret = ENOSPC;
+		if (dropfull)
+			goto end;
 		atomic_store_explicit(&r->rindex, rd + 1, memory_order_release);
 		rd = rd + 1;
 	}
@@ -73,9 +96,11 @@ void ring_add(struct mvaring *r, const struct adc_data *data)
 
 	/* publish new writer index */
 	atomic_store_explicit(&r->windex, next_w, memory_order_release);
-
+end:
 	r->writing++;
 	atomic_thread_fence(memory_order_release);
+
+	return ret;
 }
 
 int ring_read(struct mvaring *r, struct adc_data *buf, unsigned int num_chunks)

@@ -31,7 +31,16 @@ struct mvaring {
 
 struct mvaring * ring_init(void *buff, size_t bufsize);
 bool ring_is_ok(struct mvaring *r);
-void ring_add(struct mvaring *r, const struct adc_data *data);
+/*
+ * Ring add returns zero when a value was added to a buffer, and buffer had
+ * space. Non zero value is returned if there was not enough space in the ring
+ * (whether or not the old values were overwritten).
+ *
+ * The @dropfull controls whether the data is dropped when ring is full, or if
+ * the old data is overwritten. Setting dropfull to true will cause new data
+ * to be dropped, setting it false makes old to be overwritten.
+ */
+int ring_add(struct mvaring *r, const struct adc_data *data, bool dropfull);
 int ring_read(struct mvaring *r, struct adc_data *buf, unsigned int num_chunks);
 
 #ifdef __cpp
