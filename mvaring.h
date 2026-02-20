@@ -30,6 +30,8 @@ struct mvaring {
 };
 
 struct mvaring * ring_init(void *buff, size_t bufsize);
+bool ring_full(struct mvaring *r);
+bool ring_empty(struct mvaring *r);
 bool ring_is_ok(struct mvaring *r);
 /*
  * Ring add returns zero when a value was added to a buffer, and buffer had

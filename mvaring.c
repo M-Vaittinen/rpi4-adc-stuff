@@ -50,6 +50,22 @@ bool ring_is_ok(struct mvaring *r)
 	return true;
 }
 
+bool ring_full(struct mvaring *r)
+{
+	unsigned w = atomic_load_explicit(&r->windex, memory_order_relaxed);
+	unsigned rd = atomic_load_explicit(&r->rindex, memory_order_acquire);
+
+	return (w -1 == rd);
+}
+
+bool ring_empty(struct mvaring *r)
+{
+	unsigned w = atomic_load_explicit(&r->windex, memory_order_relaxed);
+	unsigned rd = atomic_load_explicit(&r->rindex, memory_order_acquire);
+
+	return (w == rd);
+}
+
 int ring_add(struct mvaring *r, const struct adc_data *data, bool dropfull)
 {
 	unsigned w = atomic_load_explicit(&r->windex, memory_order_relaxed);
