@@ -94,7 +94,25 @@ int ring_add(struct mvaring *r, const struct adc_data *data, bool dropfull)
 	 *    the data - and fast reader finishing the reads quickly enough to
 	 *    keep chances of seqlock to be updated during the read low.
 	 */
-	r->writing++;
+
+	/*
+	 * Seqlock implementation:
+	 * - Increment before write (makes counter ODD = write in progress)
+	 * - Increment after write (makes counter EVEN = stable)
+	 * - Counter always increases, never decrements
+	 *
+	 * Reader checks:
+	 * 1. If counter is ODD, a write is in progress -> retry
+	 * 2. Save counter value before reading
+	 * 3. After reading, compare counter value:
+	 *    - If changed (even by 2), writer updated during read -> retry
+	 *    - If same, read was consistent -> success
+	 *
+	 * This allows detecting concurrent writes without requiring the writer
+	 * to decrement, which would make detection unreliable if a full write
+	 * cycle completed during the read.
+	 */
+	r->writing++;  /* Start write: make counter ODD */
 	atomic_thread_fence(memory_order_release);
 
 	if (next_w == rd + NUM_DATA_CHUNKS) {
@@ -113,7 +131,7 @@ int ring_add(struct mvaring *r, const struct adc_data *data, bool dropfull)
 	/* publish new writer index */
 	atomic_store_explicit(&r->windex, next_w, memory_order_release);
 end:
-	r->writing++;
+	r->writing++;  /* End write: make counter EVEN (allows reader to detect intervening writes) */
 	atomic_thread_fence(memory_order_release);
 
 	return ret;
