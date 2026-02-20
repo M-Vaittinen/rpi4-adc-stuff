@@ -7,9 +7,14 @@
 #include "rpi_shmem.h"
 #include "mvaring.h"
 
+/* TODO: Use real bitmask (12 bits?) */
+#define ADC_BITMASK 0xffff
+
 static struct adc_data data[10];
 /* first 2 chuncks of data to guesstimate clk */
 static struct adc_data start_data[2];
+
+#define RAW2SAMP(raw) (((uint16_t)(raw) >> 8 | (uint16_t)raw << 8) & ADC_BITMASK)
 
 void store_one(FILE *wf, struct adc_data *a, uint32_t nsec_delta)
 {
@@ -17,8 +22,7 @@ void store_one(FILE *wf, struct adc_data *a, uint32_t nsec_delta)
 	int i;
 
 	for (i = 0; i < MAX_SAMPS; i++)
-		fprintf(wf, "%llu\t%u\n",time + i * nsec_delta, ((a->samples[i] << 8) | (a->samples[i] >> 8)) & 0xffff);
-
+		fprintf(wf, "%llu\t%u\n",time + i * nsec_delta, RAW2SAMP(a->samples[i]));
 }
 
 void store_adc(FILE *wf, struct adc_data *a, int num_a, uint32_t nsec_delta)
@@ -38,7 +42,7 @@ int main(int argc, const char *argv[])
 
 	FILE *wf;
 	
-	wf = fopen("data_out", "w");
+	wf = fopen("out/data_out", "w");
 	if (!wf) {
 		ret = errno;
 		perror("fopen");
@@ -79,6 +83,9 @@ int main(int argc, const char *argv[])
 			goto err_out;
 
 		store_adc(wf, &data[0], ret, nsec_delta);
+
+		if (ring_empty(mr))
+			break;
 	}
 
 	if (0) {
