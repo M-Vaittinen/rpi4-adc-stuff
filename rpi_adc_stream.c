@@ -141,7 +141,7 @@ static int g_in_chans = 1;
 static int g_sample_count = 0;
 static int g_sample_rate = SAMPLE_RATE;
 
-static int g_data_format;
+static int g_data_format = FMT_USEC;
 static int g_testmode;
 static int g_verbose;
 static int g_lockstep;
@@ -570,7 +570,7 @@ int write_fifo(int fd, void *data, int dlen)
 void do_streaming(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvaring *mr)
 {
 	int n;
-
+/*
 	if (!g_fifo_fd)
 	{
 		if ((g_fifo_fd = open_fifo_write(g_fifo_name)) > 0)
@@ -580,9 +580,10 @@ void do_streaming(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvaring
 		}
 	}
 	if (g_fifo_fd)
-	{
+	{*/
 		if ((n=adc_stream_csv(mp, vals, maxlen, nsamp, mr)) > 0)
 		{
+			/*
 			if (!write_fifo(g_fifo_fd, vals, n))
 			{
 				printf("Stopped streaming\n");
@@ -590,10 +591,11 @@ void do_streaming(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvaring
 				g_fifo_fd = 0;
 				usleep(100000);
 			}
+			*/
 		}
-		else
+/*		else
 			usleep(10);
-	}
+	}*/
 }
 
 // Start ADC data acquisition
