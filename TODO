@@ -1,0 +1,142 @@
+# Code Clean-up Tasks for rpi_adc_stream.c
+
+## High Priority
+
+### Task 1: Remove unused global variables and resolve TODOs
+- Remove TODO comment on line 149 and make `g_pwm_range` a local variable where needed
+- Remove TODO comment on line 151 and delete unused `g_fifo_size` global variable
+- Update all references to `g_pwm_range` to use local variables or compute in place
+
+### Task 2: Remove commented-out code blocks
+- Remove commented code block lines 526-543 (old FIFO output format code)
+- Remove commented code block lines 573-598 (old FIFO handling in do_streaming)
+- Remove commented struct explanation lines 284-292 (redundant DMA_CB documentation)
+
+### Task 3: Clean up dead FIFO-related code
+Decision needed: Remove FIFO functionality entirely or restore it?
+If removing:
+- Delete `g_fifo_fd` global variable (line 134)
+- Delete `destroy_fifo()` function (lines 160-165)
+- Delete `open_fifo_write()` function (lines 551-556)
+- Delete `write_fifo()` function (lines 559-567)
+- Delete `create_fifo()` function (lines 656-666)
+- Remove FIFO handling from `terminate()` (lines 189-190)
+- Remove FIFO-related command line option '-S' (lines 753-758)
+- Remove FIFO creation and check in main() (lines 806-818)
+- Update function signatures to remove unused FIFO parameters
+
+### Task 4: Remove unused test function
+- Delete `spi_tx_test()` function (lines 623-653) - never called in the codebase
+
+## Medium Priority
+
+### Task 5: Define constants for magic numbers
+- Create named constants for DMA channel assignments (DMA_CHAN_A, B, C values)
+- Create constant for DMA priority configuration `(8<<24)|(1<<16)|(8<<8)|1`
+- Replace magic numbers throughout the code with named constants
+
+### Task 6: Improve error handling in fail() function
+- Change `fail()` to accept formatted strings like printf
+- Update calls to use fprintf(stderr, ...) for consistency
+- Consider renaming to `fail_with_message()` for clarity
+
+### Task 7: Fix inconsistent global naming
+- Ensure all global variables use `g_` prefix consistently
+- Review `g_fifo_name` (line 157) - already has prefix, verify others
+
+## Low Priority
+
+### Task 8: Remove commented variable declaration
+- Remove `/*i,*/` comment on line 497 in adc_stream_csv() function
+
+### Task 9: Replace infinite sleep loop with graceful shutdown
+- Lines 522-523: Replace `while(1) sleep(10);` with proper shutdown mechanism
+- Consider setting a flag and breaking the main loop
+- Add proper error message before terminating
+
+### Task 10: Clean up unused command-line options
+- Remove or implement `g_lockstep` functionality (parsed but not effectively used)
+- Remove or implement `g_verbose` functionality (code is commented out on lines 536-541)
+- Update help text or usage information if options are removed
+
+## Implementation Notes
+
+- Each task should be implemented as a separate commit
+- Test compilation after each task to ensure no breakage
+- Run the program in test mode (-T flag) after changes to verify functionality
+- Consider impact on external programs that may depend on FIFO functionality before removing it
+
+---
+
+# Code Clean-up Tasks for mvaring.c
+
+## Critical Issues
+
+### Task 11: Fix seqlock atomicity
+- Change `r->writing` from plain `uint8_t` to `atomic_uchar` or `_Atomic uint8_t`
+- Update mvaring.h line 24 to use atomic type
+- Update all accesses to use atomic operations:
+  - Lines 97, 116 in mvaring.c: use `atomic_fetch_add_explicit(&r->writing, 1, memory_order_release)`
+  - Lines 132, 174 in mvaring.c: use `atomic_load_explicit(&r->writing, memory_order_acquire)`
+- This fixes potential race conditions on the seqlock counter itself
+
+### Task 12: Fix dropped counter overflow risk
+- Change `dropped` from `uint16_t` to `uint32_t` in mvaring.h line 25
+- Consider `uint64_t` if very long-running sessions are expected
+- Update any code that reads or displays this counter
+
+### Task 13: Fix header include guard in mvaring.h
+- Change line 1: `#ifndef MVABUF_H` to `#ifndef MVARING_H`
+- Change line 2: `#define MVABUF_H` to `#define MVARING_H`
+- Ensures consistency with filename
+
+### Task 14: Fix C++ macro in mvaring.h
+- Change line 4: `#ifdef __cpp` to `#ifdef __cplusplus`
+- Change line 48: `#ifdef __cpp` to `#ifdef __cplusplus`
+- Uses correct standard C++ predefined macro
+
+### Task 15: Fix error code inconsistency
+- Line 103 in mvaring.c: Change `ret = ENOSPC;` to `ret = -ENOSPC;`
+- Ensures all error returns use negative errno values
+- Maintains consistency with other return values (-EINVAL, -EAGAIN)
+
+## Medium Priority
+
+### Task 16: Add named constant for retry limit
+- Define `MAX_RETRY_ATTEMPTS` constant (value: 1000) in mvaring.h
+- Replace hardcoded 1000 on lines 134 and 177 in mvaring.c
+- Improves maintainability and allows easy tuning
+
+### Task 17: Fix typos in comments
+- Line 92: Change "perfor" to "perform"
+- Line 95: Change "chuncks" to "chunks"
+
+### Task 18: Document memory ordering choices
+- Add comment explaining why `memory_order_relaxed` is used for windex loads
+- Add comment explaining why `memory_order_acquire` is used for rindex loads
+- Document the memory ordering guarantees provided by the ring buffer
+- Place this documentation near the atomic operations or in header file
+
+### Task 19: Verify SPINAWHILE macro definition
+- Check that SPINAWHILE() is defined in included headers
+- If missing, add appropriate definition (e.g., CPU pause instruction or sched_yield())
+- Document its purpose (yield CPU during spin-wait to reduce contention)
+
+## Low Priority
+
+### Task 20: Add function documentation
+- Add header comments for ring_init(), ring_add(), and ring_read()
+- Document the single-writer/single-reader concurrency model
+- Document memory ordering guarantees
+- Document performance characteristics
+- Add usage examples for typical producer-consumer patterns
+
+### Task 21: Add inline helper functions for clarity
+- Create `ring_available()` helper to return number of available entries
+- Create `ring_space()` helper to return free space in ring
+- Use these in ring_full() and ring_empty() to reduce code duplication
+
+### Task 22: Consider adding debug/statistics support
+- Add compile-time option to track statistics (total reads, writes, retries)
+- Add validation checks for debug builds
+- Consider adding ring_get_stats() function
