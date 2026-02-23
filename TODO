@@ -147,3 +147,14 @@ If removing:
 - Remove TODO comment on line 151 and delete unused `g_fifo_size` global variable
 - Update all references to `g_pwm_range` to use local variables or compute in place
 - Status: Completed in commit 288d546dda48 (cleanup-todo-tasks branch)
+
+### Task 2: Remove commented-out code blocks [COMPLETED]
+- Remove commented code block lines 526-543 (old FIFO output format code)
+- Remove commented code block lines 573-598 (old FIFO handling in do_streaming)
+- Remove commented struct explanation lines 284-292 (redundant DMA_CB documentation)
+- Status: Completed in commit 35bdddf79a67 (cleanup-todo-tasks branch)
+
+### Task 3: Clean up dead FIFO-related code [COMPLETED]
+- Removed all FIFO named pipe functionality
+- Kept SPI hardware FIFO references (those are needed for hardware control)
+- Status: Completed (cleanup-todo-tasks branch)
