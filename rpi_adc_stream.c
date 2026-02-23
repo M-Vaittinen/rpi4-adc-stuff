@@ -278,16 +278,6 @@ float test_pwm_frequency(MEM_MAP *mp, const uint32_t pwm_range)
 		.val = pwm_range,
 		.usecs = {0, 0},
 		.cbs = {
-/*
-	uint32_t ti;		// Transfer info
-	uint32_t srce_ad;	// Source address
-	uint32_t dest_ad;	// Destination address
-	uint32_t tfr_len;	// Transfer length
-	uint32_t stride;	// Transfer stride
-	uint32_t next_cb;	// Next control block
-	uint32_t debug;		// Debug register, zero in control block
-	uint32_t unused;
-	*/
 		// Tx output: 2 initial transfers, then timed transfer
 			{
 				.ti = PWM_TI,
@@ -519,26 +509,6 @@ int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvarin
 			if (ring_add(mr, &g_tmp_data, true))
 				while(1)
 					sleep(10);
-
-
-			/*
-			 * Drop the fifo.
-			if (!g_lockstep || fifo_freespace(g_fifo_fd)>=g_fifo_size)
-			{
-				if (g_data_format == FMT_USEC)
-					slen += sprintf(&vals[slen], "%u", usec-g_usec_start);
-				for (i=0; i<nsamp && slen+20<maxlen; i++)
-					slen += sprintf(&vals[slen], "%s%4.3f", slen ? "," : "",
-						ADC_VOLTAGE(ADC_RAW_VAL(g_rx_buff[i])));
-				slen += sprintf(&vals[slen], "\n");
-				if (g_verbose)
-				{
-					for (int i=0; i<nsamp*4; i++)
-						printf("%02X ", *(((uint8_t *)g_rx_buff)+i));
-					printf("\n");
-				}
-			}
-			*/
 		}
 	}
 	vals[slen] = 0;
@@ -568,32 +538,9 @@ int write_fifo(int fd, void *data, int dlen)
 void do_streaming(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvaring *mr)
 {
 	int n;
-/*
-	if (!g_fifo_fd)
+	if ((n=adc_stream_csv(mp, vals, maxlen, nsamp, mr)) > 0)
 	{
-		if ((g_fifo_fd = open_fifo_write(g_fifo_name)) > 0)
-		{
-			printf("Started streaming to FIFO '%s'\n", g_fifo_name);
-			g_fifo_size = fifo_freespace(g_fifo_fd);
-		}
 	}
-	if (g_fifo_fd)
-	{*/
-		if ((n=adc_stream_csv(mp, vals, maxlen, nsamp, mr)) > 0)
-		{
-			/*
-			if (!write_fifo(g_fifo_fd, vals, n))
-			{
-				printf("Stopped streaming\n");
-				close(g_fifo_fd);
-				g_fifo_fd = 0;
-				usleep(100000);
-			}
-			*/
-		}
-/*		else
-			usleep(10);
-	}*/
 }
 
 // Start ADC data acquisition
