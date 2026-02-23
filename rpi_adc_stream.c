@@ -123,15 +123,9 @@ static struct adc_data g_tmp_data;
 
 static uint32_t *g_rx_buff = g_tmp_data.samples;
 
-// fcntl constant to get free FIFO length
-#define F_GETPIPE_SZ	1032
-
 // Virtual memory pointers to acceess peripherals & memory
 extern MEM_MAP gpio_regs, dma_regs, clk_regs, pwm_regs;
 MEM_MAP vc_mem, spi_regs, usec_regs;
-
-// File descriptor for FIFO
-static int g_fifo_fd;
 
 // Data formats for -f option
 #define FMT_USEC	1
@@ -151,16 +145,6 @@ static uint32_t g_overrun_total;
 
 
 static struct shmem_info g_shm_info;
-
-char *g_fifo_name;
-
-// Remove the FIFO
-void destroy_fifo(char *fname, int fd)
-{
-	if (fd > 0)
-		close(fd);
-	unlink(fname);
-}
 
 // Disable SPI
 void spi_disable(void)
@@ -184,8 +168,6 @@ void terminate(int sig)
 	unmap_periph_mem(&spi_regs);
 	unmap_periph_mem(&dma_regs);
 	unmap_periph_mem(&gpio_regs);
-	if (g_fifo_name)
-		destroy_fifo(g_fifo_name, g_fifo_fd);
 	if (g_samp_total)
 		printf("Total samples %u, overruns %u\n", g_samp_total, g_overrun_total);
 
@@ -515,25 +497,6 @@ int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvarin
 	return(slen);
 }
 
-// Open a FIFO for writing, return 0 if there is no reader
-int open_fifo_write(char *fname)
-{
-	int f = open(fname, O_WRONLY | O_NONBLOCK);
-
-	return(f == -1 ? 0 : f);
-}
-
-// Write to FIFO, return 0 if no reader
-int write_fifo(int fd, void *data, int dlen)
-{
-	struct pollfd pollfd = {fd, POLLOUT, 0};
-
-	poll(&pollfd, 1, 0);
-	if (pollfd.revents&POLLOUT && !(pollfd.revents&POLLERR))
-		return(fd ? write(fd, data, dlen) : 0);
-	return(0);
-}
-
 // Manage streaming output
 void do_streaming(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvaring *mr)
 {
@@ -695,12 +658,6 @@ int main(int argc, char *argv[])
 				else
 					g_sample_rate = atoi(argv[++args]);
 				break;
-			case 'S':				   // -S: stream into named pipe (FIFO)
-				if (args>=argc-1 || !argv[args+1][0])
-					fprintf(stderr, "Error: no FIFO name\n");
-				else
-					g_fifo_name = argv[++args];
-				break;
 			case 'T':				   // -T: test mode
 				g_testmode = 1;
 				break;
@@ -748,28 +705,14 @@ int main(int argc, char *argv[])
 		freq = test_pwm_frequency(&vc_mem, pwm_range);
 		printf("%7.3f Hz\n", freq);
 	}
-	else if (g_fifo_name)
-	{
-		if (create_fifo(g_fifo_name))
-		{
-			printf("Created FIFO '%s'\n", g_fifo_name);
-			printf("Streaming %u samples per block at %u S/s %s\n",
-				   g_sample_count, g_sample_rate, g_lockstep ? "(g_lockstep)" : "");
-			adc_dma_init(&vc_mem, g_sample_count, 0, pwm_range);
-			adc_stream_start();
-			while (1)
-				do_streaming(&vc_mem, g_stream_buff, STREAM_BUFFLEN, g_sample_count, mr);
-		}
-	}
 	else
 	{
-		printf("Reading %u samples at %u S/s\n", g_sample_count, g_sample_rate);
-		adc_dma_init(&vc_mem, g_sample_count, 1, pwm_range);
+		printf("Streaming %u samples per block at %u S/s\n",
+			   g_sample_count, g_sample_rate);
+		adc_dma_init(&vc_mem, g_sample_count, 0, pwm_range);
 		adc_stream_start();
-		adc_stream_wait();
-		adc_stream_stop();
-		adc_stream_csv(&vc_mem, g_stream_buff, STREAM_BUFFLEN, g_sample_count, mr);
-		printf("%s", g_stream_buff);
+		while (1)
+			do_streaming(&vc_mem, g_stream_buff, STREAM_BUFFLEN, g_sample_count, mr);
 	}
 	terminate(0);
 }
