@@ -146,9 +146,7 @@ static int g_testmode;
 static int g_verbose;
 static int g_lockstep;
 
-static uint32_t g_pwm_range; /* TODO: Drop this. Change to local var, or compute in place */
 static uint32_t g_samp_total;
-static uint32_t g_fifo_size; /* TODO: Drop this */
 static uint32_t g_overrun_total;
 
 
@@ -273,11 +271,11 @@ float test_spi_frequency(MEM_MAP *mp)
 }
 
 // Test PWM frequency
-float test_pwm_frequency(MEM_MAP *mp)
+float test_pwm_frequency(MEM_MAP *mp, const uint32_t pwm_range)
 {
 	TEST_DMA_DATA *dp=mp->virt;
 	TEST_DMA_DATA dma_data = {
-		.val = g_pwm_range,
+		.val = pwm_range,
 		.usecs = {0, 0},
 		.cbs = {
 /*
@@ -340,7 +338,7 @@ float test_pwm_frequency(MEM_MAP *mp)
 	};
 	memcpy(dp, &dma_data, sizeof(dma_data));				// Copy DMA data into uncached memory
 	*REG32(spi_regs, SPI_DC) = (8<<24)|(1<<16)|(8<<8)|1;	// Set DMA priorities
-	init_pwm(PWM_FREQ, g_pwm_range, PWM_VALUE);			   // Initialise PWM
+	init_pwm(PWM_FREQ, pwm_range, PWM_VALUE);			   // Initialise PWM
 	*REG32(pwm_regs, PWM_DMAC) = PWM_DMAC_ENAB | PWM_ENAB;  // Enable PWM DMA
 	start_dma(mp, DMA_CHAN_A, &dp->cbs[0], 0);			  // Start DMA
 	start_pwm();											// Start PWM
@@ -362,12 +360,12 @@ typedef struct {
 } ADC_DMA_DATA;
 
 // Initialise PWM-paced DMA for ADC sampling
-void adc_dma_init(MEM_MAP *mp, int nsamp, int single)
+void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_range)
 {
 	ADC_DMA_DATA *dp = mp->virt;
 	ADC_DMA_DATA dma_data = {
 		.samp_size = 2,
-		.pwm_val = g_pwm_range,
+		.pwm_val = pwm_range,
 		.txd={0xd0, g_in_chans>1 ? 0xf0 : 0xd0},
 		.adc_csd = SPI_TFR_ACT | SPI_AUTO_CS | SPI_DMA_EN |
 			   SPI_FIFO_CLR | ADC_CE_NUM | SPI_CPHA | SPI_CPOL,
@@ -475,7 +473,7 @@ void adc_dma_init(MEM_MAP *mp, int nsamp, int single)
 	if (single)								 // If single-shot, stop after first Rx block
 		dma_data.cbs[2].next_cb = 0;
 	memcpy(dp, &dma_data, sizeof(dma_data));	// Copy DMA data into uncached memory
-	init_pwm(PWM_FREQ, g_pwm_range, PWM_VALUE);   // Initialise PWM, with DMA
+	init_pwm(PWM_FREQ, pwm_range, PWM_VALUE);   // Initialise PWM, with DMA
 	*REG32(pwm_regs, PWM_DMAC) = PWM_DMAC_ENAB | PWM_ENAB;
 	*REG32(spi_regs, SPI_DC) = (8<<24) | (1<<16) | (8<<8) | 1;  // Set DMA priorities
 	*REG32(spi_regs, SPI_CS) = SPI_FIFO_CLR;					// Clear SPI FIFOs
@@ -792,7 +790,7 @@ int main(int argc, char *argv[])
 	map_devices();
 	map_uncached_mem(&vc_mem, VC_MEM_SIZE);
 	signal(SIGINT, terminate);
-	g_pwm_range = (PWM_FREQ * 2) / g_sample_rate;
+	const uint32_t pwm_range = (PWM_FREQ * 2) / g_sample_rate;
 	f = init_spi(SPI_FREQ);
 	if (g_testmode)
 	{
@@ -800,7 +798,7 @@ int main(int argc, char *argv[])
 		freq = test_spi_frequency(&vc_mem);
 		printf("%7.3f MHz\n", freq);
 		printf("Testing %5u Hz  PWM frequency: ", g_sample_rate);
-		freq = test_pwm_frequency(&vc_mem);
+		freq = test_pwm_frequency(&vc_mem, pwm_range);
 		printf("%7.3f Hz\n", freq);
 	}
 	else if (g_fifo_name)
@@ -810,7 +808,7 @@ int main(int argc, char *argv[])
 			printf("Created FIFO '%s'\n", g_fifo_name);
 			printf("Streaming %u samples per block at %u S/s %s\n",
 				   g_sample_count, g_sample_rate, g_lockstep ? "(g_lockstep)" : "");
-			adc_dma_init(&vc_mem, g_sample_count, 0);
+			adc_dma_init(&vc_mem, g_sample_count, 0, pwm_range);
 			adc_stream_start();
 			while (1)
 				do_streaming(&vc_mem, g_stream_buff, STREAM_BUFFLEN, g_sample_count, mr);
@@ -819,7 +817,7 @@ int main(int argc, char *argv[])
 	else
 	{
 		printf("Reading %u samples at %u S/s\n", g_sample_count, g_sample_rate);
-		adc_dma_init(&vc_mem, g_sample_count, 1);
+		adc_dma_init(&vc_mem, g_sample_count, 1, pwm_range);
 		adc_stream_start();
 		adc_stream_wait();
 		adc_stream_stop();
