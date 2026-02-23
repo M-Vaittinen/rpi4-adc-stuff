@@ -2,10 +2,11 @@
 
 ## Medium Priority
 
-### Task 5: Define constants for magic numbers
+### Task 5: Define constants for magic numbers [COMPLETED]
 - Create named constants for DMA channel assignments (DMA_CHAN_A, B, C values)
 - Create constant for DMA priority configuration `(8<<24)|(1<<16)|(8<<8)|1`
 - Replace magic numbers throughout the code with named constants
+- Status: DMA channels already defined in rpi_dma_utils.h, SPI_DMA_PRIORITY added (cleanup-todo-tasks branch)
 
 ### Task 6: Improve error handling in fail() function
 - Change `fail()` to accept formatted strings like printf
