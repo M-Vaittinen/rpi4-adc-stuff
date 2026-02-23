@@ -107,6 +107,11 @@
 #define SPI_CE0		0
 #define SPI_CE1		1
 
+// SPI DMA priority configuration (SPI_DC register)
+// Format: RPANIC(31:24) | RDREQ(23:16) | TPANIC(15:8) | TDREQ(7:0)
+// RX panic=8, RX req=1, TX panic=8, TX req=1
+#define SPI_DMA_PRIORITY ((8<<24)|(1<<16)|(8<<8)|1)
+
 // SPI register strings
 static char *g_spi_regstrs[] = {"CS", "FIFO", "CLK", "DLEN", "LTOH", "DC", ""};
 
@@ -241,7 +246,7 @@ float test_spi_frequency(MEM_MAP *mp)
 		}
 	};
 	memcpy(dp, &dma_data, sizeof(dma_data));				// Copy DMA data into uncached memory
-	*REG32(spi_regs, SPI_DC) = (8<<24)|(1<<16)|(8<<8)|1;	// Set DMA priorities
+	*REG32(spi_regs, SPI_DC) = SPI_DMA_PRIORITY;			// Set DMA priorities
 	*REG32(spi_regs, SPI_CS) = SPI_FIFO_CLR;				// Clear SPI FIFOs
 	start_dma(mp, DMA_CHAN_A, &dp->cbs[0], 0);			  // Start SPI Tx DMA
 	*REG32(spi_regs, SPI_DLEN) = (TEST_NSAMPS + 2) * 4;	 // Set data length, and SPI flags
@@ -309,7 +314,7 @@ float test_pwm_frequency(MEM_MAP *mp, const uint32_t pwm_range)
 		}
 	};
 	memcpy(dp, &dma_data, sizeof(dma_data));				// Copy DMA data into uncached memory
-	*REG32(spi_regs, SPI_DC) = (8<<24)|(1<<16)|(8<<8)|1;	// Set DMA priorities
+	*REG32(spi_regs, SPI_DC) = SPI_DMA_PRIORITY;			// Set DMA priorities
 	init_pwm(PWM_FREQ, pwm_range, PWM_VALUE);			   // Initialise PWM
 	*REG32(pwm_regs, PWM_DMAC) = PWM_DMAC_ENAB | PWM_ENAB;  // Enable PWM DMA
 	start_dma(mp, DMA_CHAN_A, &dp->cbs[0], 0);			  // Start DMA
@@ -447,7 +452,7 @@ void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_range)
 	memcpy(dp, &dma_data, sizeof(dma_data));	// Copy DMA data into uncached memory
 	init_pwm(PWM_FREQ, pwm_range, PWM_VALUE);   // Initialise PWM, with DMA
 	*REG32(pwm_regs, PWM_DMAC) = PWM_DMAC_ENAB | PWM_ENAB;
-	*REG32(spi_regs, SPI_DC) = (8<<24) | (1<<16) | (8<<8) | 1;  // Set DMA priorities
+	*REG32(spi_regs, SPI_DC) = SPI_DMA_PRIORITY;			// Set DMA priorities
 	*REG32(spi_regs, SPI_CS) = SPI_FIFO_CLR;					// Clear SPI FIFOs
 	start_dma(mp, DMA_CHAN_C, &dp->cbs[6], 0);  // Start SPI Tx DMA
 	start_dma(mp, DMA_CHAN_B, &dp->cbs[0], 0);  // Start SPI Rx DMA
