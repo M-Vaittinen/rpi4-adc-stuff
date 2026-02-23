@@ -1,28 +1,5 @@
 # Code Clean-up Tasks for rpi_adc_stream.c
 
-## High Priority
-
-### Task 2: Remove commented-out code blocks
-- Remove commented code block lines 526-543 (old FIFO output format code)
-- Remove commented code block lines 573-598 (old FIFO handling in do_streaming)
-- Remove commented struct explanation lines 284-292 (redundant DMA_CB documentation)
-
-### Task 3: Clean up dead FIFO-related code
-Decision needed: Remove FIFO functionality entirely or restore it?
-If removing:
-- Delete `g_fifo_fd` global variable (line 134)
-- Delete `destroy_fifo()` function (lines 160-165)
-- Delete `open_fifo_write()` function (lines 551-556)
-- Delete `write_fifo()` function (lines 559-567)
-- Delete `create_fifo()` function (lines 656-666)
-- Remove FIFO handling from `terminate()` (lines 189-190)
-- Remove FIFO-related command line option '-S' (lines 753-758)
-- Remove FIFO creation and check in main() (lines 806-818)
-- Update function signatures to remove unused FIFO parameters
-
-### Task 4: Remove unused test function
-- Delete `spi_tx_test()` function (lines 623-653) - never called in the codebase
-
 ## Medium Priority
 
 ### Task 5: Define constants for magic numbers
