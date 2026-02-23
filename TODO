@@ -2,11 +2,6 @@
 
 ## High Priority
 
-### Task 1: Remove unused global variables and resolve TODOs
-- Remove TODO comment on line 149 and make `g_pwm_range` a local variable where needed
-- Remove TODO comment on line 151 and delete unused `g_fifo_size` global variable
-- Update all references to `g_pwm_range` to use local variables or compute in place
-
 ### Task 2: Remove commented-out code blocks
 - Remove commented code block lines 526-543 (old FIFO output format code)
 - Remove commented code block lines 573-598 (old FIFO handling in do_streaming)
@@ -140,3 +135,15 @@ If removing:
 - Add compile-time option to track statistics (total reads, writes, retries)
 - Add validation checks for debug builds
 - Consider adding ring_get_stats() function
+
+---
+
+# Completed Tasks
+
+## rpi_adc_stream.c
+
+### Task 1: Remove unused global variables and resolve TODOs [COMPLETED]
+- Remove TODO comment on line 149 and make `g_pwm_range` a local variable where needed
+- Remove TODO comment on line 151 and delete unused `g_fifo_size` global variable
+- Update all references to `g_pwm_range` to use local variables or compute in place
+- Status: Completed in commit 288d546dda48 (cleanup-todo-tasks branch)
