@@ -28,8 +28,6 @@
 #include <ctype.h>
 #include <sys/stat.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <poll.h>
 
 #include "adc_common.h"
 #include "common.h"
@@ -143,7 +141,6 @@ static int g_sample_rate = SAMPLE_RATE;
 static int g_data_format = FMT_USEC;
 static int g_testmode;
 static int g_verbose;
-static int g_lockstep;
 
 static uint32_t g_samp_total;
 static uint32_t g_overrun_total;
@@ -459,13 +456,6 @@ void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_range)
 	start_dma(mp, DMA_CHAN_A, &dp->cbs[7], 0);  // Start PWM DMA, for SPI trigger
 }
 
-// Return the free space in FIFO
-uint32_t fifo_freespace(int fd)
-{
-	return(fcntl(fd, F_GETPIPE_SZ));
-}
-
-
 int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvaring *mr)
 {
 	ADC_DMA_DATA *dp=mp->virt;
@@ -530,7 +520,6 @@ void adc_stream_stop(void)
 }
 
 // Fetch samples from ADC buffer, return comma-delimited integer values
-// If in g_lockstep mode, discard new data if FIFO isn't empty
 // Test of SPI write cycles
 // Redundant code, kept in as an explanation of SPI data length
 int spi_tx_test(MEM_MAP *mp, uint16_t *buff, int nsamp)
@@ -563,19 +552,6 @@ int spi_tx_test(MEM_MAP *mp, uint16_t *buff, int nsamp)
 	}
 #endif
 	return(0);
-}
-
-// Create a FIFO (named pipe)
-int create_fifo(char *fname)
-{
-	int ok=0;
-
-	umask(0);
-	if (mkfifo(fname, S_IRUSR|S_IWUSR|S_IRGRP|S_IROTH) < 0 && errno != EEXIST)
-		printf("Can't open FIFO '%s'\n", fname);
-	else
-		ok = 1;
-	return(ok);
 }
 
 // Initialise SPI0, given desired clock freq; return actual value
@@ -621,7 +597,6 @@ int main(int argc, char *argv[])
 	float freq;
 
 	g_sample_count = MAX_SAMPS;
-	g_fifo_name = "/tmp/adc.fifo";
 
 	printf("RPi ADC streamer v" VERSION "\n");
 	while (argc > ++args)               // Process command-line args
@@ -641,9 +616,6 @@ int main(int argc, char *argv[])
 					fprintf(stderr, "Error: no input chan count\n");
 				else
 					g_in_chans = atoi(argv[++args]);
-				break;
-			case 'L':				   // -L: g_lockstep streaming
-				g_lockstep = 1;
 				break;
 			case 'N':				   // -N: number of samples per block
 				if (args>=argc-1 || !isdigit((int)argv[args+1][0]) ||
