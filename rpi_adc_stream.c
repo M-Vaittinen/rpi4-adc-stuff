@@ -140,7 +140,6 @@ static int g_sample_rate = SAMPLE_RATE;
 
 static int g_data_format = FMT_USEC;
 static int g_testmode;
-static int g_verbose;
 
 static uint32_t g_samp_total;
 static uint32_t g_overrun_total;
@@ -460,6 +459,7 @@ int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvarin
 {
 	ADC_DMA_DATA *dp=mp->virt;
 	uint32_t /*i,*/ n, usec, slen=0;
+
 	for (n=0; n<2 && slen==0; n++)
 	{
 		if (dp->states[n])
@@ -489,16 +489,8 @@ int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvarin
 		}
 	}
 	vals[slen] = 0;
-	return(slen);
-}
 
-// Manage streaming output
-void do_streaming(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvaring *mr)
-{
-	int n;
-	if ((n=adc_stream_csv(mp, vals, maxlen, nsamp, mr)) > 0)
-	{
-	}
+	return(slen);
 }
 
 // Start ADC data acquisition
@@ -591,6 +583,7 @@ void disp_spi(void)
 // Main program
 int main(int argc, char *argv[])
 {
+	const uint32_t pwm_range = (PWM_FREQ * 2) / g_sample_rate;
 	struct mvaring *mr;
 	int args=0;
 	int f, ret;
@@ -605,41 +598,8 @@ int main(int argc, char *argv[])
 		{
 			switch (toupper(argv[args][1]))
 			{
-			case 'F':	               // -F: output format
-				if (args>=argc-1 || !isdigit((int)argv[args+1][0]))
-					fprintf(stderr, "Error: no format value\n");
-				else
-					g_data_format = atoi(argv[++args]);
-				break;
-			case 'I':	               // -I: number of input channels
-				if (args>=argc-1 || !isdigit((int)argv[args+1][0]))
-					fprintf(stderr, "Error: no input chan count\n");
-				else
-					g_in_chans = atoi(argv[++args]);
-				break;
-			case 'N':				   // -N: number of samples per block
-				if (args>=argc-1 || !isdigit((int)argv[args+1][0]) ||
-					(g_sample_count = atoi(argv[++args])) < 1)
-					fprintf(stderr, "Error: no sample count\n");
-				else if (g_sample_count > MAX_SAMPS)
-				{
-					fprintf(stderr, "Error: maximum sample count %u\n", MAX_SAMPS);
-					g_sample_count = MAX_SAMPS;
-				}
-				break;
-			case 'R':				   // -R: sample rate (samples/sec)
-				if (args>=argc-1 || !isdigit((int)argv[args+1][0]))
-					fprintf(stderr, "Error: no sample rate\n");
-				else if (g_sample_rate > MAX_SAMPLE_RATE)
-					fprintf(stderr, "Error: exceeded max sample rate\n");
-				else
-					g_sample_rate = atoi(argv[++args]);
-				break;
 			case 'T':				   // -T: test mode
 				g_testmode = 1;
-				break;
-			case 'V':				   // -V: g_verbose mode (display hex data)
-				g_verbose = 1;
 				break;
 			default:
 				printf("Error: unrecognised option '%s'\n", argv[args]);
@@ -671,7 +631,6 @@ int main(int argc, char *argv[])
 	map_devices();
 	map_uncached_mem(&vc_mem, VC_MEM_SIZE);
 	signal(SIGINT, terminate);
-	const uint32_t pwm_range = (PWM_FREQ * 2) / g_sample_rate;
 	f = init_spi(SPI_FREQ);
 	if (g_testmode)
 	{
@@ -681,16 +640,18 @@ int main(int argc, char *argv[])
 		printf("Testing %5u Hz  PWM frequency: ", g_sample_rate);
 		freq = test_pwm_frequency(&vc_mem, pwm_range);
 		printf("%7.3f Hz\n", freq);
+
+		goto end;
 	}
-	else
-	{
-		printf("Streaming %u samples per block at %u S/s\n",
-			   g_sample_count, g_sample_rate);
-		adc_dma_init(&vc_mem, g_sample_count, 0, pwm_range);
-		adc_stream_start();
-		while (1)
-			do_streaming(&vc_mem, g_stream_buff, STREAM_BUFFLEN, g_sample_count, mr);
-	}
+
+	printf("Streaming %u samples per block at %u S/s\n",
+		   g_sample_count, g_sample_rate);
+	adc_dma_init(&vc_mem, g_sample_count, 0, pwm_range);
+	adc_stream_start();
+	while (1)
+		adc_stream_csv(&vc_mem, g_stream_buff, STREAM_BUFFLEN, g_sample_count, mr);
+
+end:
 	terminate(0);
 }
 
