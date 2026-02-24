@@ -38,8 +38,29 @@
 
 #define VERSION "0.20"
 
-#define SAMPLE_RATE	 100000     // Default & max sample rate (samples/sec)
-#define MAX_SAMPLE_RATE 1000000
+#define MEGA(_meg) (_meg * 1000000LLU)
+#define KILO(_kil) (_kil * 1000LLU)
+
+/* Choose either hi or lo speed. Hi for 1MSPS, Lo for 100KSPS */
+#define LO_SPEED
+//#define HI_SPEED
+
+#ifdef LO_SPEED
+	#define SAMPLE_RATE	 KILO(100)     // Default & max sample rate (samples/sec)
+	#define SPI_FREQ	MEGA(2)
+#else
+	#ifndef HI_SPEED
+		#error "Either HI_SPEED or LO_SPEED is required"
+	#endif
+	#define SAMPLE_RATE	 MEGA(1)
+	#define SPI_FREQ	MEGA(20)
+#endif
+
+#define MAX_SAMPLE_RATE MEGA(1)
+
+// SPI clock frequency
+#define MIN_SPI_FREQ	10000
+#define MAX_SPI_FREQ	MEGA(20)
 
 // PWM definitions: divisor, and reload value
 #define PWM_FREQ	    1000000
@@ -74,11 +95,6 @@
 #define PWM_TI		(DMA_DEST_DREQ | (DMA_PWM_DREQ << 16) | DMA_WAIT_RESP)
 #define SPI_RX_TI	(DMA_SRCE_DREQ | (DMA_SPI_RX_DREQ << 16) | DMA_WAIT_RESP | DMA_CB_DEST_INC)
 #define SPI_TX_TI	(DMA_DEST_DREQ | (DMA_SPI_TX_DREQ << 16) | DMA_WAIT_RESP | DMA_CB_SRCE_INC)
-
-// SPI clock frequency
-#define MIN_SPI_FREQ	10000
-#define MAX_SPI_FREQ	20000000
-#define SPI_FREQ	2000000
 
 // SPI 0 pin definitions
 #define SPI0_CE0_PIN	8
