@@ -5,11 +5,6 @@ section at the bottom of this file. Keep only active tasks at the top.**
 
 ## Low Priority
 
-### Task 9: Replace infinite sleep loop with graceful shutdown
-- Lines 522-523: Replace `while(1) sleep(10);` with proper shutdown mechanism
-- Consider setting a flag and breaking the main loop
-- Add proper error message before terminating
-
 ### Task 10: Clean up unused command-line options
 - Remove or implement `g_lockstep` functionality (parsed but not effectively used)
 - Remove or implement `g_verbose` functionality (code is commented out on lines 536-541)
