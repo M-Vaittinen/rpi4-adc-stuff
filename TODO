@@ -127,8 +127,17 @@ section at the bottom of this file. Keep only active tasks at the top.**
 - Consider renaming to `fail_with_message()` for clarity
 - Status: Completed - now uses variadic args and vfprintf (cleanup-todo-tasks branch)
 
-### Task 6: Improve error handling in fail() function [COMPLETED]
-- Change `fail()` to accept formatted strings like printf
-- Update calls to use fprintf(stderr, ...) for consistency
-- Consider renaming to `fail_with_message()` for clarity
-- Status: Completed - now uses variadic args and vfprintf (cleanup-todo-tasks branch)
+### Task 7: Fix inconsistent global naming [OBSOLETE]
+- Ensure all global variables use `g_` prefix consistently
+- Review `g_fifo_name` (line 157) - already has prefix, verify others
+- Status: g_fifo_name removed in Task 3, all remaining globals have g_ prefix
+
+### Task 8: Remove commented variable declaration [COMPLETED]
+- Remove `/*i,*/` comment on line 497 in adc_stream_csv() function
+- Status: Completed (cleanup-todo-tasks branch)
+
+### Task 9: Replace infinite sleep loop with graceful shutdown [COMPLETED]
+- Lines 522-523: Replace `while(1) sleep(10);` with proper shutdown mechanism
+- Consider setting a flag and breaking the main loop
+- Add proper error message before terminating
+- Status: Completed - waits for 'quit'/'q' command while preserving shared memory (cleanup-todo-tasks branch)
