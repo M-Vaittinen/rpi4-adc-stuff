@@ -36,6 +36,15 @@ struct mvaring * ring_init(void *buff, size_t bufsize)
 	return r;
 }
 
+/**
+ * ring_is_ok() - Validate ring buffer structure
+ * @r: Pointer to ring buffer
+ *
+ * Checks if ring buffer has valid version and size fields.
+ * Used to detect corruption or version mismatches.
+ *
+ * Return: true if valid, false otherwise
+ */
 bool ring_is_ok(struct mvaring *r)
 {
 	if (!r)
@@ -140,6 +149,35 @@ end:
 	return ret;
 }
 
+/**
+ * ring_read() - Read data from ring buffer (single reader)
+ * @r: Pointer to ring buffer
+ * @buf: Destination buffer for read data
+ * @num_chunks: Maximum number of chunks to read
+ *
+ * Reads up to num_chunks entries from ring buffer. This function implements
+ * a lock-free single-reader design using atomic operations and seqlock.
+ *
+ * Memory ordering:
+ * - Reader owns rindex (uses relaxed atomics for own index)
+ * - Reader acquires windex to see writer's data updates
+ * - Seqlock check ensures no concurrent writer modified data during read
+ * - Release semantics on rindex publish informs writer of freed space
+ *
+ * Retry behavior:
+ * - Retries up to MAX_RETRY_ATTEMPTS if writer is active (seqlock odd)
+ * - Retries if seqlock changed during read (writer modified buffer)
+ * - Uses SPINAWHILE() to reduce CPU/bus contention during busy-wait
+ *
+ * Concurrency: Only ONE reader thread/process may call this function.
+ * Multiple readers will corrupt the buffer. Safe concurrent writer via ring_add().
+ *
+ * Performance: O(1) amortized. May retry if writer active. Handles wrap-around
+ * with at most 2 memcpy operations.
+ *
+ * Return: Number of chunks read (0 to num_chunks), -EAGAIN if empty or max
+ * retries exceeded, -EINVAL on invalid parameters
+ */
 int ring_read(struct mvaring *r, struct adc_data *buf, unsigned int num_chunks)
 {
 	unsigned int tries = 0;

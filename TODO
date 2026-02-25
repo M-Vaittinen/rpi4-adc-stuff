@@ -14,13 +14,6 @@ section at the bottom of this file. Keep only active tasks at the top.**
 
 ## Low Priority
 
-### Task 20: Add function documentation
-- Add header comments for ring_init(), ring_add(), and ring_read()
-- Document the single-writer/single-reader concurrency model
-- Document memory ordering guarantees
-- Document performance characteristics
-- Add usage examples for typical producer-consumer patterns
-
 ### Task 21: Add inline helper functions for clarity
 - Create `ring_available()` helper to return number of available entries
 - Create `ring_space()` helper to return free space in ring

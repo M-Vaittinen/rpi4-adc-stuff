@@ -17,6 +17,12 @@
 
 #ifdef BE_LAZY
 
+/* SPINAWHILE: CPU pause/yield instruction during busy-wait loops
+ * Purpose: Reduce power consumption and bus contention when spinning
+ * - On x86: 'pause' reduces pipeline flushes on spin loops
+ * - On ARM v7+: 'yield' hints CPU can switch to another thread
+ * - Fallback: memory barrier to prevent over-optimization
+ */
 #if defined(__i386__) || defined(__x86_64__)
 	#define SPINAWHILE() __asm__ __volatile__("pause" ::: "memory");
 
@@ -31,6 +37,9 @@
 #endif
 
 #else // Don't be lazy but use tight busy loop
+	/* SPINAWHILE: Yield CPU to scheduler during busy-wait
+	 * Uses sched_yield() to allow other processes to run
+	 */
 	#define SPINAWHILE() sched_yield()
 #endif
 
