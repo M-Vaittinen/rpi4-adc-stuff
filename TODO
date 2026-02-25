@@ -7,15 +7,6 @@ section at the bottom of this file. Keep only active tasks at the top.**
 
 ## Medium Priority
 
-### Task 16: Add named constant for retry limit
-- Define `MAX_RETRY_ATTEMPTS` constant (value: 1000) in mvaring.h
-- Replace hardcoded 1000 on lines 134 and 177 in mvaring.c
-- Improves maintainability and allows easy tuning
-
-### Task 17: Fix typos in comments
-- Line 92: Change "perfor" to "perform"
-- Line 95: Change "chuncks" to "chunks"
-
 ### Task 18: Document memory ordering choices
 - Add comment explaining why `memory_order_relaxed` is used for windex loads
 - Add comment explaining why `memory_order_acquire` is used for rindex loads
