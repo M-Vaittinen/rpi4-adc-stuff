@@ -7,12 +7,6 @@ section at the bottom of this file. Keep only active tasks at the top.**
 
 ## Medium Priority
 
-### Task 18: Document memory ordering choices
-- Add comment explaining why `memory_order_relaxed` is used for windex loads
-- Add comment explaining why `memory_order_acquire` is used for rindex loads
-- Document the memory ordering guarantees provided by the ring buffer
-- Place this documentation near the atomic operations or in header file
-
 ### Task 19: Verify SPINAWHILE macro definition
 - Check that SPINAWHILE() is defined in included headers
 - If missing, add appropriate definition (e.g., CPU pause instruction or sched_yield())
