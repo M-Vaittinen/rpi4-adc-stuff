@@ -42,8 +42,8 @@
 #define KILO(_kil) (_kil * 1000LLU)
 
 /* Choose either hi or lo speed. Hi for 1MSPS, Lo for 100KSPS */
-#define LO_SPEED
-//#define HI_SPEED
+//#define LO_SPEED
+#define HI_SPEED
 
 #ifdef LO_SPEED
 	#define SAMPLE_RATE	 KILO(100)     // Default & max sample rate (samples/sec)
@@ -525,18 +525,18 @@ int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvarin
 
 			/* When ring is full, stop ADC but keep shared memory alive for consumers */
 			if (ring_add(mr, &g_tmp_data, true)) {
-				fprintf(stderr, "\nRing buffer full, stopping ADC capture\n");
-				fprintf(stderr, "Shared memory preserved for consumers to drain buffer.\n");
-				fprintf(stderr, "Type 'quit' or 'q' and press Enter to exit: ");
+				printf("\nRing buffer full, stopping ADC capture\n");
+				printf("Shared memory preserved for consumers to drain buffer.\n");
+				printf("Type 'quit' or 'q' and press Enter to exit: ");
 				adc_stream_stop();
 				
 				char cmd[32];
 				while (fgets(cmd, sizeof(cmd), stdin)) {
 					if (strncmp(cmd, "quit", 4) == 0 || cmd[0] == 'q') {
-						fprintf(stderr, "Exiting...\n");
+						printf("Exiting...\n");
 						terminate(0);
 					}
-					fprintf(stderr, "Type 'quit' or 'q' and press Enter to exit: ");
+					printf("Type 'quit' or 'q' and press Enter to exit: ");
 				}
 			}
 		}
