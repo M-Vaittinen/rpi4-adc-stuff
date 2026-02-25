@@ -136,3 +136,9 @@
 - Create constant for DMA priority configuration `(8<<24)|(1<<16)|(8<<8)|1`
 - Replace magic numbers throughout the code with named constants
 - Status: DMA channels already defined in rpi_dma_utils.h, SPI_DMA_PRIORITY added (cleanup-todo-tasks branch)
+
+### Task 6: Improve error handling in fail() function [COMPLETED]
+- Change `fail()` to accept formatted strings like printf
+- Update calls to use fprintf(stderr, ...) for consistency
+- Consider renaming to `fail_with_message()` for clarity
+- Status: Completed - now uses variadic args and vfprintf (cleanup-todo-tasks branch)
