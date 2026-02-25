@@ -5,13 +5,6 @@ section at the bottom of this file. Keep only active tasks at the top.**
 
 # Code Clean-up Tasks for mvaring.c
 
-## Medium Priority
-
-### Task 19: Verify SPINAWHILE macro definition
-- Check that SPINAWHILE() is defined in included headers
-- If missing, add appropriate definition (e.g., CPU pause instruction or sched_yield())
-- Document its purpose (yield CPU during spin-wait to reduce contention)
-
 ## Low Priority
 
 ### Task 22: Consider adding debug/statistics support
