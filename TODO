@@ -3,13 +3,6 @@
 **IMPORTANT: When marking a task as [COMPLETED], move it to the "Completed Tasks" 
 section at the bottom of this file. Keep only active tasks at the top.**
 
-## Low Priority
-
-### Task 10: Clean up unused command-line options
-- Remove or implement `g_lockstep` functionality (parsed but not effectively used)
-- Remove or implement `g_verbose` functionality (code is commented out on lines 536-541)
-- Update help text or usage information if options are removed
-
 ## Implementation Notes
 
 - Each task should be implemented as a separate commit
@@ -141,3 +134,9 @@ section at the bottom of this file. Keep only active tasks at the top.**
 - Consider setting a flag and breaking the main loop
 - Add proper error message before terminating
 - Status: Completed - waits for 'quit'/'q' command while preserving shared memory (cleanup-todo-tasks branch)
+
+### Task 10: Clean up unused command-line options [OBSOLETE]
+- Remove or implement `g_lockstep` functionality (parsed but not effectively used)
+- Remove or implement `g_verbose` functionality (code is commented out on lines 536-541)
+- Update help text or usage information if options are removed
+- Status: Already completed as part of Task 3 - variables and options removed
