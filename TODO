@@ -3,6 +3,8 @@
 **IMPORTANT: When marking a task as [COMPLETED], move it to the "Completed Tasks" 
 section at the bottom of this file. Keep only active tasks at the top.**
 
+# Code Clean-up Tasks for mvaring.c
+
 ## Critical Issues
 
 ### Task 12: Fix dropped counter overflow risk
@@ -121,3 +123,13 @@ section at the bottom of this file. Keep only active tasks at the top.**
 - Remove or implement `g_verbose` functionality (code is commented out on lines 536-541)
 - Update help text or usage information if options are removed
 - Status: Already completed as part of Task 3 - variables and options removed
+
+## mvaring.c
+
+### Task 11: Fix seqlock atomicity [COMPLETED]
+- Change `r->writing` from plain `uint8_t` to `_Atomic uint8_t`
+- Update mvaring.h line 24 to use atomic type
+- Update all accesses to use atomic operations
+- Increment MVARING_VERSION from 1 to 2
+- Add performance note about frequent-write sub-optimality
+- Status: Completed (cleanup-todo-tasks branch)
