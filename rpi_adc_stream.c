@@ -528,7 +528,6 @@ int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvarin
 				printf("\nRing buffer full, stopping ADC capture\n");
 				printf("Shared memory preserved for consumers to drain buffer.\n");
 				printf("Type 'quit' or 'q' and press Enter to exit: ");
-				adc_stream_stop();
 				
 				char cmd[32];
 				while (fgets(cmd, sizeof(cmd), stdin)) {
