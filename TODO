@@ -1,5 +1,8 @@
 # Code Clean-up Tasks for rpi_adc_stream.c
 
+**IMPORTANT: When marking a task as [COMPLETED], move it to the "Completed Tasks" 
+section at the bottom of this file. Keep only active tasks at the top.**
+
 ## Medium Priority
 
 ### Task 6: Improve error handling in fail() function
