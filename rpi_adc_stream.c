@@ -486,10 +486,22 @@ int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvarin
 			if (g_data_format == FMT_USEC)
 				g_tmp_data.usecs = usec-g_usec_start;
 
-			/* When ring is full, stop */
-			if (ring_add(mr, &g_tmp_data, true))
-				while(1)
-					sleep(10);
+			/* When ring is full, stop ADC but keep shared memory alive for consumers */
+			if (ring_add(mr, &g_tmp_data, true)) {
+				fprintf(stderr, "\nRing buffer full, stopping ADC capture\n");
+				fprintf(stderr, "Shared memory preserved for consumers to drain buffer.\n");
+				fprintf(stderr, "Type 'quit' or 'q' and press Enter to exit: ");
+				adc_stream_stop();
+				
+				char cmd[32];
+				while (fgets(cmd, sizeof(cmd), stdin)) {
+					if (strncmp(cmd, "quit", 4) == 0 || cmd[0] == 'q') {
+						fprintf(stderr, "Exiting...\n");
+						terminate(0);
+					}
+					fprintf(stderr, "Type 'quit' or 'q' and press Enter to exit: ");
+				}
+			}
 		}
 	}
 	vals[slen] = 0;
