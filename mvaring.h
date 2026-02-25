@@ -12,7 +12,7 @@ extern "C" {
 
 #include "common.h"
 
-#define MVARING_VERSION 1
+#define MVARING_VERSION 2
 
 struct adc_data {
 	uint32_t usecs;
@@ -21,7 +21,7 @@ struct adc_data {
 
 struct mvaring {
 	uint8_t version;  /* ring buffer version */
-	uint8_t writing;  /* sequence-lock, might be unnecessary */
+	_Atomic uint8_t writing;  /* seqlock for write protection (NOTE: sub-optimal for frequent writes, may need optimization) */
 	uint16_t dropped; /* counter for overwritten entries (too slow reader) */
 	uint32_t size;    /* Size of the ring (should equal sizeof(struct mvaring)) */
 	atomic_uint rindex;

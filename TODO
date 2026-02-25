@@ -3,26 +3,7 @@
 **IMPORTANT: When marking a task as [COMPLETED], move it to the "Completed Tasks" 
 section at the bottom of this file. Keep only active tasks at the top.**
 
-## Implementation Notes
-
-- Each task should be implemented as a separate commit
-- Test compilation after each task to ensure no breakage
-- Run the program in test mode (-T flag) after changes to verify functionality
-- Consider impact on external programs that may depend on FIFO functionality before removing it
-
----
-
-# Code Clean-up Tasks for mvaring.c
-
 ## Critical Issues
-
-### Task 11: Fix seqlock atomicity
-- Change `r->writing` from plain `uint8_t` to `atomic_uchar` or `_Atomic uint8_t`
-- Update mvaring.h line 24 to use atomic type
-- Update all accesses to use atomic operations:
-  - Lines 97, 116 in mvaring.c: use `atomic_fetch_add_explicit(&r->writing, 1, memory_order_release)`
-  - Lines 132, 174 in mvaring.c: use `atomic_load_explicit(&r->writing, memory_order_acquire)`
-- This fixes potential race conditions on the seqlock counter itself
 
 ### Task 12: Fix dropped counter overflow risk
 - Change `dropped` from `uint16_t` to `uint32_t` in mvaring.h line 25

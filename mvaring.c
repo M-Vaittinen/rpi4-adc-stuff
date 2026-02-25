@@ -112,8 +112,7 @@ int ring_add(struct mvaring *r, const struct adc_data *data, bool dropfull)
 	 * to decrement, which would make detection unreliable if a full write
 	 * cycle completed during the read.
 	 */
-	r->writing++;  /* Start write: make counter ODD */
-	atomic_thread_fence(memory_order_release);
+	atomic_fetch_add_explicit(&r->writing, 1, memory_order_release);  /* Start write: make counter ODD */
 
 	if (next_w == rd + NUM_DATA_CHUNKS) {
 		/* buffer full -> drop oldest */
@@ -131,8 +130,7 @@ int ring_add(struct mvaring *r, const struct adc_data *data, bool dropfull)
 	/* publish new writer index */
 	atomic_store_explicit(&r->windex, next_w, memory_order_release);
 end:
-	r->writing++;  /* End write: make counter EVEN (allows reader to detect intervening writes) */
-	atomic_thread_fence(memory_order_release);
+	atomic_fetch_add_explicit(&r->writing, 1, memory_order_release);  /* End write: make counter EVEN (allows reader to detect intervening writes) */
 
 	return ret;
 }
@@ -147,7 +145,7 @@ int ring_read(struct mvaring *r, struct adc_data *buf, unsigned int num_chunks)
 		return -EINVAL;
 
 retry:
-	seq1 = r->writing;
+	seq1 = atomic_load_explicit(&r->writing, memory_order_acquire);
 	if (seq1 & 1) {
 		if (++tries < 1000) {
 			/*
@@ -189,7 +187,7 @@ retry:
 	}
 
 	/* re-check sequence */
-	uint8_t seq2 = r->writing;
+	uint8_t seq2 = atomic_load_explicit(&r->writing, memory_order_acquire);
 	if (seq1 != seq2) {
 		/* writer updated while we read -> retry */
 		if (++tries < 1000) {
