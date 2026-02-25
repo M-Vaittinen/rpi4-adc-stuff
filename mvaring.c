@@ -59,20 +59,52 @@ bool ring_is_ok(struct mvaring *r)
 	return true;
 }
 
-bool ring_full(struct mvaring *r)
+/**
+ * ring_available() - Get number of readable entries in ring buffer
+ * @r: Pointer to ring buffer
+ *
+ * Returns the number of data chunks currently available for reading.
+ * Uses relaxed atomics as this is informational only - precise count
+ * may change immediately after return due to concurrent writer.
+ *
+ * Concurrency: Safe to call concurrently with ring_add() and ring_read()
+ *
+ * Return: Number of entries available (0 to NUM_DATA_CHUNKS)
+ */
+unsigned int ring_available(struct mvaring *r)
 {
 	unsigned w = atomic_load_explicit(&r->windex, memory_order_relaxed);
-	unsigned rd = atomic_load_explicit(&r->rindex, memory_order_acquire);
+	unsigned rd = atomic_load_explicit(&r->rindex, memory_order_relaxed);
+	return (w - rd);
+}
 
-	return (w -1 == rd);
+/**
+ * ring_space() - Get number of free entries in ring buffer
+ * @r: Pointer to ring buffer
+ *
+ * Returns the amount of free space available for writing.
+ * Uses relaxed atomics as this is informational only - precise count
+ * may change immediately after return due to concurrent reader.
+ *
+ * Concurrency: Safe to call concurrently with ring_add() and ring_read()
+ *
+ * Return: Number of free entries (0 to NUM_DATA_CHUNKS)
+ */
+unsigned int ring_space(struct mvaring *r)
+{
+	unsigned w = atomic_load_explicit(&r->windex, memory_order_relaxed);
+	unsigned rd = atomic_load_explicit(&r->rindex, memory_order_relaxed);
+	return NUM_DATA_CHUNKS - (w - rd);
+}
+
+bool ring_full(struct mvaring *r)
+{
+	return (ring_space(r) == 0);
 }
 
 bool ring_empty(struct mvaring *r)
 {
-	unsigned w = atomic_load_explicit(&r->windex, memory_order_relaxed);
-	unsigned rd = atomic_load_explicit(&r->rindex, memory_order_acquire);
-
-	return (w == rd);
+	return (ring_available(r) == 0);
 }
 
 int ring_add(struct mvaring *r, const struct adc_data *data, bool dropfull)

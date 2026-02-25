@@ -14,11 +14,6 @@ section at the bottom of this file. Keep only active tasks at the top.**
 
 ## Low Priority
 
-### Task 21: Add inline helper functions for clarity
-- Create `ring_available()` helper to return number of available entries
-- Create `ring_space()` helper to return free space in ring
-- Use these in ring_full() and ring_empty() to reduce code duplication
-
 ### Task 22: Consider adding debug/statistics support
 - Add compile-time option to track statistics (total reads, writes, retries)
 - Add validation checks for debug builds

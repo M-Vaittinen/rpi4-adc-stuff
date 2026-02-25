@@ -34,6 +34,8 @@ struct mvaring * ring_init(void *buff, size_t bufsize);
 bool ring_full(struct mvaring *r);
 bool ring_empty(struct mvaring *r);
 bool ring_is_ok(struct mvaring *r);
+unsigned int ring_available(struct mvaring *r);
+unsigned int ring_space(struct mvaring *r);
 /*
  * Ring add returns zero when a value was added to a buffer, and buffer had
  * space. Non zero value is returned if there was not enough space in the ring
