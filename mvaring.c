@@ -68,6 +68,11 @@ bool ring_empty(struct mvaring *r)
 
 int ring_add(struct mvaring *r, const struct adc_data *data, bool dropfull)
 {
+	/* Memory ordering notes:
+	 * - windex load uses relaxed: we own it (single writer), no sync needed
+	 * - rindex load uses acquire: pairs with reader's release, ensures we see
+	 *   reader's updates and can safely determine buffer fullness
+	 */
 	unsigned w = atomic_load_explicit(&r->windex, memory_order_relaxed);
 	unsigned rd = atomic_load_explicit(&r->rindex, memory_order_acquire);
 
@@ -165,6 +170,11 @@ retry:
 		return -EAGAIN;
 	}
 
+	/* Memory ordering notes:
+	 * - windex load uses acquire: pairs with writer's release, ensures we see
+	 *   all writer's data updates before reading from buffer
+	 * - rindex load uses relaxed: we own it (single reader), no sync needed
+	 */
 	w = atomic_load_explicit(&r->windex, memory_order_acquire);
 	rd = atomic_load_explicit(&r->rindex, memory_order_relaxed);
 
