@@ -21,6 +21,7 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <signal.h>
@@ -180,9 +181,12 @@ void terminate(int sig)
 }
 
 // Catastrophic failure in initial setup
-void fail(char *s)
+void fail(const char *format, ...)
 {
-	printf(s);
+	va_list args;
+	va_start(args, format);
+	vfprintf(stderr, format, args);
+	va_end(args);
 	terminate(0);
 }
 
