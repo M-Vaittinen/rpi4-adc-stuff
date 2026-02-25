@@ -1,7 +1,7 @@
-#ifndef MVABUF_H
-#define MVABUF_H
+#ifndef MVARING_H
+#define MVARING_H
 
-#ifdef __cpp
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -45,7 +45,7 @@ bool ring_is_ok(struct mvaring *r);
 int ring_add(struct mvaring *r, const struct adc_data *data, bool dropfull);
 int ring_read(struct mvaring *r, struct adc_data *buf, unsigned int num_chunks);
 
-#ifdef __cpp
+#ifdef __cplusplus
 }
 #endif
 
