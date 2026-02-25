@@ -459,6 +459,27 @@ void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_range)
 	start_dma(mp, DMA_CHAN_A, &dp->cbs[7], 0);  // Start PWM DMA, for SPI trigger
 }
 
+// Start ADC data acquisition
+void adc_stream_start(void)
+{
+	start_pwm();
+}
+
+// Wait until a (single) DMA cycle is complete
+void adc_stream_wait(void)
+{
+	dma_wait(DMA_CHAN_B);
+}
+
+// Stop ADC data acquisition
+void adc_stream_stop(void)
+{
+	stop_dma(DMA_CHAN_A);
+	stop_dma(DMA_CHAN_B);
+	stop_dma(DMA_CHAN_C);
+	stop_pwm();
+}
+
 int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvaring *mr)
 {
 	ADC_DMA_DATA *dp=mp->virt;
@@ -507,24 +528,6 @@ int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvarin
 	vals[slen] = 0;
 
 	return(slen);
-}
-
-// Start ADC data acquisition
-void adc_stream_start(void)
-{
-	start_pwm();
-}
-
-// Wait until a (single) DMA cycle is complete
-void adc_stream_wait(void)
-{
-	dma_wait(DMA_CHAN_B);
-}
-
-// Stop ADC data acquisition
-void adc_stream_stop(void)
-{
-	stop_pwm();
 }
 
 // Fetch samples from ADC buffer, return comma-delimited integer values
