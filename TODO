@@ -5,23 +5,6 @@ section at the bottom of this file. Keep only active tasks at the top.**
 
 # Code Clean-up Tasks for mvaring.c
 
-## Critical Issues
-
-### Task 13: Fix header include guard in mvaring.h
-- Change line 1: `#ifndef MVABUF_H` to `#ifndef MVARING_H`
-- Change line 2: `#define MVABUF_H` to `#define MVARING_H`
-- Ensures consistency with filename
-
-### Task 14: Fix C++ macro in mvaring.h
-- Change line 4: `#ifdef __cpp` to `#ifdef __cplusplus`
-- Change line 48: `#ifdef __cpp` to `#ifdef __cplusplus`
-- Uses correct standard C++ predefined macro
-
-### Task 15: Fix error code inconsistency
-- Line 103 in mvaring.c: Change `ret = ENOSPC;` to `ret = -ENOSPC;`
-- Ensures all error returns use negative errno values
-- Maintains consistency with other return values (-EINVAL, -EAGAIN)
-
 ## Medium Priority
 
 ### Task 16: Add named constant for retry limit
