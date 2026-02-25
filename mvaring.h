@@ -13,6 +13,7 @@ extern "C" {
 #include "common.h"
 
 #define MVARING_VERSION 2
+#define MAX_RETRY_ATTEMPTS 1000
 
 struct adc_data {
 	uint32_t usecs;

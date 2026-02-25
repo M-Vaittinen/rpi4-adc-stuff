@@ -147,7 +147,7 @@ int ring_read(struct mvaring *r, struct adc_data *buf, unsigned int num_chunks)
 retry:
 	seq1 = atomic_load_explicit(&r->writing, memory_order_acquire);
 	if (seq1 & 1) {
-		if (++tries < 1000) {
+		if (++tries < MAX_RETRY_ATTEMPTS) {
 			/*
 			 * TODO: Check if we need to spin here. Other option is
 			 * to just keep trying and forget the 'tries' -counter.
@@ -190,7 +190,7 @@ retry:
 	uint8_t seq2 = atomic_load_explicit(&r->writing, memory_order_acquire);
 	if (seq1 != seq2) {
 		/* writer updated while we read -> retry */
-		if (++tries < 1000) {
+		if (++tries < MAX_RETRY_ATTEMPTS) {
 			SPINAWHILE();
 			goto retry;
 		}
