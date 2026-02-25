@@ -47,6 +47,52 @@ All page numbers refer to "RP-008248-DS-1-bcm2711-peripherals.pdf" in docs/ fold
 
 ## Implementation Steps
 
+### Step 0: Define GPIO trigger pins and configuration
+
+**File:** rpi_adc_stream.c or adc_common.h
+
+**Changes:**
+1. Add trigger pin definitions (near top of file with other defines):
+   ```c
+   /* GPIO trigger configuration */
+   #define TRIGGER_PIN_0    16    // Primary trigger on GPIO 16
+   #define TRIGGER_PIN_1    17    // Secondary trigger on GPIO 17 (optional)
+   #define NUM_TRIGGER_PINS 2     // Number of trigger pins to configure
+   
+   /* GPIO trigger polarity - which level is considered "active"
+    * 0 = active low (trigger when pin goes low)
+    * 1 = active high (trigger when pin goes high)
+    */
+   #define TRIGGER_POLARITY_0 1   // GPIO 16: active high
+   #define TRIGGER_POLARITY_1 1   // GPIO 17: active high
+   ```
+
+2. Add GPIO configuration function (before main() or in init):
+   ```c
+   static void gpio_trigger_init(void)
+   {
+       /* Configure trigger pins as inputs with pull-down resistors
+        * Pull-down ensures stable low state when no signal connected
+        */
+       gpio_set(TRIGGER_PIN_0, GPIO_IN, GPIO_PULL_DOWN);
+       gpio_set(TRIGGER_PIN_1, GPIO_IN, GPIO_PULL_DOWN);
+       
+       fprintf(stderr, "GPIO triggers configured:\n");
+       fprintf(stderr, "  GPIO %d: input, pull-down, %s\n", 
+               TRIGGER_PIN_0, TRIGGER_POLARITY_0 ? "active-high" : "active-low");
+       fprintf(stderr, "  GPIO %d: input, pull-down, %s\n",
+               TRIGGER_PIN_1, TRIGGER_POLARITY_1 ? "active-high" : "active-low");
+   }
+   ```
+
+3. Call gpio_trigger_init() in main() after hardware initialization
+
+**Reference:**
+- GPIO_IN, GPIO_PULL_DOWN, GPIO_PULL_UP already defined in rpi_dma_utils.h
+- gpio_set() function available (see rpi_dma_utils.h line 193-195)
+- Pages 66-67: GPIO function select (GPFSEL registers)
+- Pages 72-73: GPIO pull-up/down (GPPUD registers)
+
 ### Step 1: Extend data structures for GPIO capture
 
 **File:** rpi_adc_stream.c
