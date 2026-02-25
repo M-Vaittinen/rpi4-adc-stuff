@@ -117,7 +117,7 @@ int ring_add(struct mvaring *r, const struct adc_data *data, bool dropfull)
 	if (next_w == rd + NUM_DATA_CHUNKS) {
 		/* buffer full -> drop oldest */
 		r->dropped++;
-		ret = ENOSPC;
+		ret = -ENOSPC;
 		if (dropfull)
 			goto end;
 		atomic_store_explicit(&r->rindex, rd + 1, memory_order_release);

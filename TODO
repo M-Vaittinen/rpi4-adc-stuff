@@ -7,11 +7,6 @@ section at the bottom of this file. Keep only active tasks at the top.**
 
 ## Critical Issues
 
-### Task 12: Fix dropped counter overflow risk
-- Change `dropped` from `uint16_t` to `uint32_t` in mvaring.h line 25
-- Consider `uint64_t` if very long-running sessions are expected
-- Update any code that reads or displays this counter
-
 ### Task 13: Fix header include guard in mvaring.h
 - Change line 1: `#ifndef MVABUF_H` to `#ifndef MVARING_H`
 - Change line 2: `#define MVABUF_H` to `#define MVARING_H`
