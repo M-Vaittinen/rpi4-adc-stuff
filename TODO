@@ -1,88 +1,11 @@
 # Code Clean-up Tasks for rpi_adc_stream.c
 
-## Medium Priority
-
-### Task 5: Define constants for magic numbers [COMPLETED]
-- Create named constants for DMA channel assignments (DMA_CHAN_A, B, C values)
-- Create constant for DMA priority configuration `(8<<24)|(1<<16)|(8<<8)|1`
-- Replace magic numbers throughout the code with named constants
-- Status: DMA channels already defined in rpi_dma_utils.h, SPI_DMA_PRIORITY added (cleanup-todo-tasks branch)
-
-### Task 6: Improve error handling in fail() function
-- Change `fail()` to accept formatted strings like printf
-- Update calls to use fprintf(stderr, ...) for consistency
-- Consider renaming to `fail_with_message()` for clarity
-
-### Task 7: Fix inconsistent global naming
-- Ensure all global variables use `g_` prefix consistently
-- Review `g_fifo_name` (line 157) - already has prefix, verify others
-
-## Low Priority
-
-### Task 8: Remove commented variable declaration
-- Remove `/*i,*/` comment on line 497 in adc_stream_csv() function
-
-### Task 9: Replace infinite sleep loop with graceful shutdown
-- Lines 522-523: Replace `while(1) sleep(10);` with proper shutdown mechanism
-- Consider setting a flag and breaking the main loop
-- Add proper error message before terminating
-
-### Task 10: Clean up unused command-line options
-- Remove or implement `g_lockstep` functionality (parsed but not effectively used)
-- Remove or implement `g_verbose` functionality (code is commented out on lines 536-541)
-- Update help text or usage information if options are removed
-
-## Implementation Notes
-
-- Each task should be implemented as a separate commit
-- Test compilation after each task to ensure no breakage
-- Run the program in test mode (-T flag) after changes to verify functionality
-- Consider impact on external programs that may depend on FIFO functionality before removing it
-
----
+**IMPORTANT: When marking a task as [COMPLETED], move it to the "Completed Tasks" 
+section at the bottom of this file. Keep only active tasks at the top.**
 
 # Code Clean-up Tasks for mvaring.c
 
-## Critical Issues
-
-### Task 11: Fix seqlock atomicity
-- Change `r->writing` from plain `uint8_t` to `atomic_uchar` or `_Atomic uint8_t`
-- Update mvaring.h line 24 to use atomic type
-- Update all accesses to use atomic operations:
-  - Lines 97, 116 in mvaring.c: use `atomic_fetch_add_explicit(&r->writing, 1, memory_order_release)`
-  - Lines 132, 174 in mvaring.c: use `atomic_load_explicit(&r->writing, memory_order_acquire)`
-- This fixes potential race conditions on the seqlock counter itself
-
-### Task 12: Fix dropped counter overflow risk
-- Change `dropped` from `uint16_t` to `uint32_t` in mvaring.h line 25
-- Consider `uint64_t` if very long-running sessions are expected
-- Update any code that reads or displays this counter
-
-### Task 13: Fix header include guard in mvaring.h
-- Change line 1: `#ifndef MVABUF_H` to `#ifndef MVARING_H`
-- Change line 2: `#define MVABUF_H` to `#define MVARING_H`
-- Ensures consistency with filename
-
-### Task 14: Fix C++ macro in mvaring.h
-- Change line 4: `#ifdef __cpp` to `#ifdef __cplusplus`
-- Change line 48: `#ifdef __cpp` to `#ifdef __cplusplus`
-- Uses correct standard C++ predefined macro
-
-### Task 15: Fix error code inconsistency
-- Line 103 in mvaring.c: Change `ret = ENOSPC;` to `ret = -ENOSPC;`
-- Ensures all error returns use negative errno values
-- Maintains consistency with other return values (-EINVAL, -EAGAIN)
-
 ## Medium Priority
-
-### Task 16: Add named constant for retry limit
-- Define `MAX_RETRY_ATTEMPTS` constant (value: 1000) in mvaring.h
-- Replace hardcoded 1000 on lines 134 and 177 in mvaring.c
-- Improves maintainability and allows easy tuning
-
-### Task 17: Fix typos in comments
-- Line 92: Change "perfor" to "perform"
-- Line 95: Change "chuncks" to "chunks"
 
 ### Task 18: Document memory ordering choices
 - Add comment explaining why `memory_order_relaxed` is used for windex loads
@@ -135,4 +58,47 @@
 ### Task 3: Clean up dead FIFO-related code [COMPLETED]
 - Removed all FIFO named pipe functionality
 - Kept SPI hardware FIFO references (those are needed for hardware control)
+- Status: Completed (cleanup-todo-tasks branch)
+
+### Task 5: Define constants for magic numbers [COMPLETED]
+- Create named constants for DMA channel assignments (DMA_CHAN_A, B, C values)
+- Create constant for DMA priority configuration `(8<<24)|(1<<16)|(8<<8)|1`
+- Replace magic numbers throughout the code with named constants
+- Status: DMA channels already defined in rpi_dma_utils.h, SPI_DMA_PRIORITY added (cleanup-todo-tasks branch)
+
+### Task 6: Improve error handling in fail() function [COMPLETED]
+- Change `fail()` to accept formatted strings like printf
+- Update calls to use fprintf(stderr, ...) for consistency
+- Consider renaming to `fail_with_message()` for clarity
+- Status: Completed - now uses variadic args and vfprintf (cleanup-todo-tasks branch)
+
+### Task 7: Fix inconsistent global naming [OBSOLETE]
+- Ensure all global variables use `g_` prefix consistently
+- Review `g_fifo_name` (line 157) - already has prefix, verify others
+- Status: g_fifo_name removed in Task 3, all remaining globals have g_ prefix
+
+### Task 8: Remove commented variable declaration [COMPLETED]
+- Remove `/*i,*/` comment on line 497 in adc_stream_csv() function
+- Status: Completed (cleanup-todo-tasks branch)
+
+### Task 9: Replace infinite sleep loop with graceful shutdown [COMPLETED]
+- Lines 522-523: Replace `while(1) sleep(10);` with proper shutdown mechanism
+- Consider setting a flag and breaking the main loop
+- Add proper error message before terminating
+- Status: Completed - waits for 'quit'/'q' command while preserving shared memory (cleanup-todo-tasks branch)
+
+### Task 10: Clean up unused command-line options [OBSOLETE]
+- Remove or implement `g_lockstep` functionality (parsed but not effectively used)
+- Remove or implement `g_verbose` functionality (code is commented out on lines 536-541)
+- Update help text or usage information if options are removed
+- Status: Already completed as part of Task 3 - variables and options removed
+
+## mvaring.c
+
+### Task 11: Fix seqlock atomicity [COMPLETED]
+- Change `r->writing` from plain `uint8_t` to `_Atomic uint8_t`
+- Update mvaring.h line 24 to use atomic type
+- Update all accesses to use atomic operations
+- Increment MVARING_VERSION from 1 to 2
+- Add performance note about frequent-write sub-optimality
 - Status: Completed (cleanup-todo-tasks branch)

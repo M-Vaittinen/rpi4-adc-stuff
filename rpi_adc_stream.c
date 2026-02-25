@@ -21,6 +21,7 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <signal.h>
@@ -41,8 +42,8 @@
 #define KILO(_kil) (_kil * 1000LLU)
 
 /* Choose either hi or lo speed. Hi for 1MSPS, Lo for 100KSPS */
-#define LO_SPEED
-//#define HI_SPEED
+//#define LO_SPEED
+#define HI_SPEED
 
 #ifdef LO_SPEED
 	#define SAMPLE_RATE	 KILO(100)     // Default & max sample rate (samples/sec)
@@ -196,9 +197,12 @@ void terminate(int sig)
 }
 
 // Catastrophic failure in initial setup
-void fail(char *s)
+void fail(const char *format, ...)
 {
-	printf(s);
+	va_list args;
+	va_start(args, format);
+	vfprintf(stderr, format, args);
+	va_end(args);
 	terminate(0);
 }
 
@@ -471,6 +475,27 @@ void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_range)
 	start_dma(mp, DMA_CHAN_A, &dp->cbs[7], 0);  // Start PWM DMA, for SPI trigger
 }
 
+// Start ADC data acquisition
+void adc_stream_start(void)
+{
+	start_pwm();
+}
+
+// Wait until a (single) DMA cycle is complete
+void adc_stream_wait(void)
+{
+	dma_wait(DMA_CHAN_B);
+}
+
+// Stop ADC data acquisition
+void adc_stream_stop(void)
+{
+	stop_dma(DMA_CHAN_A);
+	stop_dma(DMA_CHAN_B);
+	stop_dma(DMA_CHAN_C);
+	stop_pwm();
+}
+
 int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvaring *mr)
 {
 	ADC_DMA_DATA *dp=mp->virt;
@@ -498,33 +523,26 @@ int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvarin
 			if (g_data_format == FMT_USEC)
 				g_tmp_data.usecs = usec-g_usec_start;
 
-			/* When ring is full, stop */
-			if (ring_add(mr, &g_tmp_data, true))
-				while(1)
-					sleep(10);
+			/* When ring is full, stop ADC but keep shared memory alive for consumers */
+			if (ring_add(mr, &g_tmp_data, true)) {
+				printf("\nRing buffer full, stopping ADC capture\n");
+				printf("Shared memory preserved for consumers to drain buffer.\n");
+				printf("Type 'quit' or 'q' and press Enter to exit: ");
+				
+				char cmd[32];
+				while (fgets(cmd, sizeof(cmd), stdin)) {
+					if (strncmp(cmd, "quit", 4) == 0 || cmd[0] == 'q') {
+						printf("Exiting...\n");
+						terminate(0);
+					}
+					printf("Type 'quit' or 'q' and press Enter to exit: ");
+				}
+			}
 		}
 	}
 	vals[slen] = 0;
 
 	return(slen);
-}
-
-// Start ADC data acquisition
-void adc_stream_start(void)
-{
-	start_pwm();
-}
-
-// Wait until a (single) DMA cycle is complete
-void adc_stream_wait(void)
-{
-	dma_wait(DMA_CHAN_B);
-}
-
-// Stop ADC data acquisition
-void adc_stream_stop(void)
-{
-	stop_pwm();
 }
 
 // Fetch samples from ADC buffer, return comma-delimited integer values
