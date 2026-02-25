@@ -3,21 +3,7 @@
 **IMPORTANT: When marking a task as [COMPLETED], move it to the "Completed Tasks" 
 section at the bottom of this file. Keep only active tasks at the top.**
 
-## Medium Priority
-
-### Task 6: Improve error handling in fail() function
-- Change `fail()` to accept formatted strings like printf
-- Update calls to use fprintf(stderr, ...) for consistency
-- Consider renaming to `fail_with_message()` for clarity
-
-### Task 7: Fix inconsistent global naming
-- Ensure all global variables use `g_` prefix consistently
-- Review `g_fifo_name` (line 157) - already has prefix, verify others
-
 ## Low Priority
-
-### Task 8: Remove commented variable declaration
-- Remove `/*i,*/` comment on line 497 in adc_stream_csv() function
 
 ### Task 9: Replace infinite sleep loop with graceful shutdown
 - Lines 522-523: Replace `while(1) sleep(10);` with proper shutdown mechanism
