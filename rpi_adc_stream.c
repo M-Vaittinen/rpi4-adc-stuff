@@ -83,10 +83,11 @@
 #define SAMP_SIZE	4
 #define BUFF_LEN	(MAX_SAMPS * SAMP_SIZE)
 #define MAX_BUFFS	2
-#define VC_MEM_SIZE	(PAGE_SIZE + (BUFF_LEN * MAX_BUFFS))
+// VC_MEM_SIZE: PAGE_SIZE for alignment + 2 ADC buffers + 2 GPIO buffers
+#define VC_MEM_SIZE	(PAGE_SIZE + (BUFF_LEN * MAX_BUFFS * 2))
 
 // DMA control block macros
-#define NUM_CBS		10
+#define NUM_CBS		12
 #define REG(r, a)	REG_BUS_ADDR(r, a)
 #define MEM(m, a)	MEM_BUS_ADDR(m, a)
 #define CBS(n)		MEM_BUS_ADDR(mp, &dp->cbs[(n)])
@@ -376,6 +377,8 @@ typedef struct {
 	volatile uint32_t states[2];
 	volatile uint32_t rxd1[MAX_SAMPS];
 	volatile uint32_t rxd2[MAX_SAMPS];
+	volatile uint32_t gpio_rxd1[MAX_SAMPS];  // GPIO samples for buffer 1
+	volatile uint32_t gpio_rxd2[MAX_SAMPS];  // GPIO samples for buffer 2
 } ADC_DMA_DATA;
 
 // Initialise PWM-paced DMA for ADC sampling
