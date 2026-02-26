@@ -40,29 +40,6 @@ echo ""
 echo "Toggling GPIO$TEST_GPIO. Press Ctrl+C to stop."
 echo ""
 
-COUNT=0
-STATE=0
-
-# Trap Ctrl+C for cleanup
-cleanup() {
-    echo ""
-    echo ""
-    echo "Cleaning up..."
-    gpioset -z gpiochip0 $TEST_GPIO=0 2>/dev/null
-    echo "Total toggles: $COUNT"
-    echo "Exiting."
-    exit 0
-}
-trap cleanup INT TERM
-
-# Toggle loop
-while true; do
-    gpioset -m time -u ${DELAY_MS}000 gpiochip0 $TEST_GPIO=$STATE
-    STATE=$((1 - STATE))
-    COUNT=$((COUNT + 1))
-    
-    # Print status every 100 toggles
-    if [ $((COUNT % 100)) -eq 0 ]; then
-        printf "\rToggles: %d  State: %s  " "$COUNT" "$([ $STATE -eq 1 ] && echo 'HIGH' || echo 'LOW ')"
-    fi
-done
+# Use gpioset's --toggle option for clean toggling
+# Pattern: high for DELAY_MS, low for DELAY_MS, repeat forever (0 = infinite loop)
+gpioset --toggle ${DELAY_MS}ms,${DELAY_MS}ms,0 gpiochip0 ${TEST_GPIO}=1
