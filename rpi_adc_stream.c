@@ -555,8 +555,9 @@ int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvarin
 		if (dp->states[n])
 		{
 			g_samp_total += nsamp;
-			/* Copy data to adc_data struct */
+			/* Copy ADC and GPIO data to adc_data struct */
 			memcpy(g_rx_buff, n ? (void *)dp->rxd2 : (void *)dp->rxd1, nsamp*4);
+			memcpy(g_tmp_data.gpio_lev0, n ? (void *)dp->gpio_rxd2 : (void *)dp->gpio_rxd1, nsamp*4);
 			usec = dp->usecs[n];
 			if (dp->states[n^1])
 			{
