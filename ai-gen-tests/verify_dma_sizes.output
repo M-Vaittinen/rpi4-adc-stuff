@@ -1,0 +1,31 @@
+tmp@adc-rohm:~/streaming/ai-gen-tests $ ./verify_dma_sizes
+=== DMA Structure Size Analysis ===
+
+Configuration:
+  MAX_SAMPS: 1024
+  PAGE_SIZE: 4096 bytes
+  SAMP_SIZE: 4 bytes
+
+Old ADC_DMA_DATA structure:
+  Size: 8548 bytes (8.35 KB)
+  VC_MEM_SIZE: 12288 bytes (12.0 KB)
+
+New ADC_DMA_DATA structure (with GPIO):
+  Size: 16804 bytes (16.41 KB)
+  VC_MEM_SIZE: 20480 bytes (20.0 KB)
+  Increase: 8256 bytes (8.06 KB)
+
+DMA Constraint Checks:
+  ✓ VC_MEM_SIZE < 1 MB (OK for VideoCore)
+  ✓ Structure size is 32-bit aligned
+  ✓ DMA can handle any 32-bit address range
+  ✓ Per-transfer size: 4096 bytes (< 64 KB limit)
+
+Memory breakdown:
+  DMA CBs (12): 384 bytes
+  Metadata:    28 bytes
+  ADC rxd1:    4096 bytes
+  ADC rxd2:    4096 bytes
+  GPIO rxd1:   4096 bytes (NEW)
+  GPIO rxd2:   4096 bytes (NEW)
+
