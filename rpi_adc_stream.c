@@ -91,6 +91,19 @@
 #define MEM(m, a)	MEM_BUS_ADDR(m, a)
 #define CBS(n)		MEM_BUS_ADDR(mp, &dp->cbs[(n)])
 
+/* GPIO trigger configuration
+ * Trigger pin for external signal detection/timestamping
+ * Reference: RP-008341-DS-1-raspberry-pi-4-datasheet.pdf
+ * GPIO to 40-pin header mapping shown in datasheet section 1.2
+ */
+#define TRIGGER_PIN	 25	  // GPIO 25, Header Pin 22 (Bottom right area)
+
+/* GPIO trigger polarity - which level is considered "active"
+ * 0 = active low (trigger when pin goes low)
+ * 1 = active high (trigger when pin goes high)
+ */
+#define TRIGGER_POLARITY 1	  // Active high
+
 // DMA transfer information for PWM and SPI
 #define PWM_TI		(DMA_DEST_DREQ | (DMA_PWM_DREQ << 16) | DMA_WAIT_RESP)
 #define SPI_RX_TI	(DMA_SRCE_DREQ | (DMA_SPI_RX_DREQ << 16) | DMA_WAIT_RESP | DMA_CB_DEST_INC)
@@ -204,6 +217,19 @@ void fail(const char *format, ...)
 	vfprintf(stderr, format, args);
 	va_end(args);
 	terminate(0);
+}
+
+// Configure GPIO trigger pins for input
+static void gpio_trigger_init(void)
+{
+	/* Configure trigger pin as input with pull-down resistor
+	 * Pull-down ensures stable low state when no signal connected
+	 */
+	gpio_set(TRIGGER_PIN, GPIO_IN, GPIO_PULLDN);
+
+	fprintf(stderr, "GPIO trigger configured:\n");
+	fprintf(stderr, "  GPIO %d (Header Pin 22): input, pull-down, %s\n",
+		TRIGGER_PIN, TRIGGER_POLARITY ? "active-high" : "active-low");
 }
 
 // Map GPIO, DMA and SPI registers into virtual mem (user space)
@@ -663,6 +689,7 @@ int main(int argc, char *argv[])
 	}
 
 	map_devices();
+	gpio_trigger_init();
 	map_uncached_mem(&vc_mem, VC_MEM_SIZE);
 	signal(SIGINT, terminate);
 	f = init_spi(SPI_FREQ);
