@@ -395,6 +395,8 @@ void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_range)
 		.states = {0, 0},
 		.rxd1 = {0},
 		.rxd2 = {0},
+		.gpio_rxd1 = {0},
+		.gpio_rxd2 = {0},
 		.cbs = {
 		// Rx input: read data from usec clock and SPI, into 2 ping-pong buffers
 			{
@@ -417,17 +419,17 @@ void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_range)
 			}, // 1
 			{
 				.ti = SPI_RX_TI,
-				.srce_ad = REG(spi_regs, SPI_CS),
-				.dest_ad = MEM(mp, &dp->states[0]),
-				.tfr_len = 4,
+				.srce_ad = REG(gpio_regs, GPIO_LEV0),
+				.dest_ad = MEM(mp, dp->gpio_rxd1),
+				.tfr_len = nsamp*4,
 				.stride = 0,
 				.next_cb = CBS(3),
 				.debug = 0
-			}, // 2
+			}, // 2 - GPIO capture for buffer 1 (paced by SPI RX)
 			{
 				.ti = SPI_RX_TI,
-				.srce_ad = REG(usec_regs, USEC_TIME),
-				.dest_ad = MEM(mp, &dp->usecs[1]),
+				.srce_ad = REG(spi_regs, SPI_CS),
+				.dest_ad = MEM(mp, &dp->states[0]),
 				.tfr_len = 4,
 				.stride = 0,
 				.next_cb = CBS(4),
@@ -435,13 +437,31 @@ void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_range)
 			}, // 3
 			{
 				.ti = SPI_RX_TI,
-				.srce_ad = REG(spi_regs, SPI_FIFO),
-				.dest_ad = MEM(mp, dp->rxd2),
-				.tfr_len = nsamp*4,
+				.srce_ad = REG(usec_regs, USEC_TIME),
+				.dest_ad = MEM(mp, &dp->usecs[1]),
+				.tfr_len = 4,
 				.stride = 0,
 				.next_cb = CBS(5),
 				.debug = 0
 			}, // 4
+			{
+				.ti = SPI_RX_TI,
+				.srce_ad = REG(spi_regs, SPI_FIFO),
+				.dest_ad = MEM(mp, dp->rxd2),
+				.tfr_len = nsamp*4,
+				.stride = 0,
+				.next_cb = CBS(6),
+				.debug = 0
+			}, // 5
+			{
+				.ti = SPI_RX_TI,
+				.srce_ad = REG(gpio_regs, GPIO_LEV0),
+				.dest_ad = MEM(mp, dp->gpio_rxd2),
+				.tfr_len = nsamp*4,
+				.stride = 0,
+				.next_cb = CBS(7),
+				.debug = 0
+			}, // 6 - GPIO capture for buffer 2 (paced by SPI RX)
 			{
 				.ti = SPI_RX_TI,
 				.srce_ad = REG(spi_regs, SPI_CS),
@@ -450,7 +470,7 @@ void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_range)
 				.stride = 0,
 				.next_cb = CBS(0),
 				.debug = 0
-			}, // 5
+			}, // 7
 		// Tx output: 2 data writes to SPI for chan 0 & 1, or both chan 0
 			{
 				.ti = SPI_TX_TI,
@@ -458,9 +478,9 @@ void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_range)
 				.dest_ad = REG(spi_regs, SPI_FIFO),
 				.tfr_len = 8,
 				.stride = 0,
-				.next_cb = CBS(6),
+				.next_cb = CBS(8),
 				.debug = 0
-			}, // 6
+			}, // 8
 		// PWM ADC trigger: wait for PWM, set sample length, trigger SPI
 			{
 				.ti = PWM_TI,
@@ -468,40 +488,40 @@ void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_range)
 				.dest_ad = REG(pwm_regs, PWM_FIF1),
 				.tfr_len = 4,
 				.stride = 0,
-				.next_cb = CBS(8),
+				.next_cb = CBS(10),
 				.debug = 0
-			}, // 7
+			}, // 9
 			{
 				.ti = PWM_TI,
 				.srce_ad = MEM(mp, &dp->samp_size),
 				.dest_ad = REG(spi_regs, SPI_DLEN),
 				.tfr_len = 4,
 				.stride = 0,
-				.next_cb = CBS(9),
+				.next_cb = CBS(11),
 				.debug = 0
-			}, // 8
+			}, // 10
 			{
 				.ti = PWM_TI,
 				.srce_ad = MEM(mp, &dp->adc_csd),
 				.dest_ad = REG(spi_regs, SPI_CS),
 				.tfr_len = 4,
 				.stride = 0,
-				.next_cb = CBS(7),
+				.next_cb = CBS(9),
 				.debug = 0
-			}, // 9
+			}, // 11
 		}
 	};
 
 	if (single)								 // If single-shot, stop after first Rx block
-		dma_data.cbs[2].next_cb = 0;
+		dma_data.cbs[3].next_cb = 0;
 	memcpy(dp, &dma_data, sizeof(dma_data));	// Copy DMA data into uncached memory
 	init_pwm(PWM_FREQ, pwm_range, PWM_VALUE);   // Initialise PWM, with DMA
 	*REG32(pwm_regs, PWM_DMAC) = PWM_DMAC_ENAB | PWM_ENAB;
 	*REG32(spi_regs, SPI_DC) = SPI_DMA_PRIORITY;			// Set DMA priorities
 	*REG32(spi_regs, SPI_CS) = SPI_FIFO_CLR;					// Clear SPI FIFOs
-	start_dma(mp, DMA_CHAN_C, &dp->cbs[6], 0);  // Start SPI Tx DMA
+	start_dma(mp, DMA_CHAN_C, &dp->cbs[8], 0);  // Start SPI Tx DMA
 	start_dma(mp, DMA_CHAN_B, &dp->cbs[0], 0);  // Start SPI Rx DMA
-	start_dma(mp, DMA_CHAN_A, &dp->cbs[7], 0);  // Start PWM DMA, for SPI trigger
+	start_dma(mp, DMA_CHAN_A, &dp->cbs[9], 0);  // Start PWM DMA, for SPI trigger
 }
 
 // Start ADC data acquisition
