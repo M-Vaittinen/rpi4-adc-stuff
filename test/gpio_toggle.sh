@@ -41,5 +41,7 @@ echo "Toggling GPIO$TEST_GPIO. Press Ctrl+C to stop."
 echo ""
 
 # Use gpioset's --toggle option for clean toggling
-# Pattern: high for DELAY_MS, low for DELAY_MS, repeat forever (0 = infinite loop)
-gpioset --toggle ${DELAY_MS}ms,${DELAY_MS}ms,0 gpiochip0 ${TEST_GPIO}=1
+# Pattern: high for DELAY_MS, low for DELAY_MS, repeat forever
+# Last period must be non-zero to loop (0 would exit)
+# Syntax: gpioset --chip <chip> --toggle <periods> <line>=<value>
+gpioset --chip 0 --toggle ${DELAY_MS}ms,${DELAY_MS}ms ${TEST_GPIO}=1
