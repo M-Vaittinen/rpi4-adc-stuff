@@ -28,12 +28,12 @@
 #include <unistd.h>
 #include <ctype.h>
 #include <sys/mman.h>
-
 #include <GL/glew.h>
 #include <GL/freeglut.h>
 
-#include "mvaring.h"
+#include "adc_common.h"
 #include "rpi_shmem.h"
+#include "mvaring.h"
 
 #define VERSION         "0.33"
 #define USE_ES          1
@@ -223,7 +223,7 @@ int main(int argc, char *argv[])
 // Initialize shared memory ring buffer
 int init_shmem(void)
 {
-    shmem_fd = shm_open(SHMEM_NAME, O_RDONLY, 0);
+    shmem_fd = shm_open(SHM_NAME, O_RDONLY, 0);
     if (shmem_fd < 0)
     {
         perror("shm_open");
@@ -244,14 +244,19 @@ int init_shmem(void)
 // Read ADC samples from ring buffer
 int ring_read_samples(float *vals, int maxvals)
 {
-    struct adc_sample sample;
+    struct adc_data chunk;
     int nvals = 0;
+    int chunks_to_read = 1;
 
-    while (nvals < maxvals && ring_read(ring, &sample))
+    while (nvals < maxvals && ring_read(ring, &chunk, chunks_to_read) > 0)
     {
-        vals[nvals++] = (float)sample.adc / 4096.0 * 3.3;  // Convert to voltage
-        if (verbose && nvals < 10)
-            printf("%1.3f ", vals[nvals-1]);
+        // Read all samples from the chunk
+        for (int i = 0; i < MAX_SAMPS && nvals < maxvals; i++)
+        {
+            vals[nvals++] = (float)chunk.samples[i] / 4096.0 * 3.3;  // Convert to voltage
+            if (verbose && nvals < 10)
+                printf("%1.3f ", vals[nvals-1]);
+        }
     }
     if (verbose && nvals)
         printf("\n");

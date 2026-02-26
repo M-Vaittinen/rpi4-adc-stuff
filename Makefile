@@ -7,7 +7,7 @@ OUT=rpi_adc_stream
 OUT2=rpi_adc_bufextract
 HDR=rpi_dma_utils.h mvaring.h rpi_shmem.h common.h adc_common.h
 DISPOUT=test-ui
-DISPSRC=rpi_opengl_graph.c
+DISPSRC=rpi_opengl_graph.c rpi_shmem.c mvaring.c
 DISPLDFLAGS=-lm -lglut -lGLEW -lGL
 CC=gcc
 
