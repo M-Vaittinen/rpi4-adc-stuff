@@ -119,7 +119,9 @@ int num_chans=NUM_CHANS;
 // Buffer for shader compiler messages
 char txtbuff[20000];
 // Buffer for ADC sample values
-float sample_vals[MAX_VALS];
+static float g_sample_vals[MAX_VALS];
+// Buffer for GPIO data corresponding to samples
+static uint32_t g_gpio_vals[MAX_VALS];
 
 // Macros for GLSL strings
 #define VALSTR(s) #s
@@ -171,7 +173,7 @@ char vert_shader[] =
     SL("};");
 
 int add_vertex_data(void);
-void update_polyline(TRACE *tp, float *vals, int np);
+void update_polyline(TRACE *tp, float *vals, uint32_t *gpio_data, int np);
 void do_graph(void);
 
 // Initialize shared memory ring buffer
@@ -215,7 +217,6 @@ static inline int check_gpio_trigger(uint32_t gpio_level)
 	prev_gpio = prev_gpio_state & TRIGGER_MASK;
 
 	if (curr_gpio != prev_gpio) {
-		paused = 1;
 		printf("Trigger detected: GPIO%d changed from %d to %d - Display PAUSED\n",
 		       TRIGGER_GPIO,
 		       prev_gpio ? 1 : 0,
@@ -228,8 +229,8 @@ static inline int check_gpio_trigger(uint32_t gpio_level)
 	return 0;
 }
 
-/* Read ADC samples from ring buffer */
-int ring_read_samples(float *vals, int maxvals)
+/* Read ADC samples from ring buffer, with GPIO data */
+int ring_read_samples(float *vals, uint32_t *gpio_data, int maxvals)
 {
 	int nvals = 0;
 	int chunks_to_read = 1;
@@ -238,9 +239,10 @@ int ring_read_samples(float *vals, int maxvals)
 	while (nvals < maxvals && ring_read(ring, &g_chunk, chunks_to_read) > 0) {
 		/* Read all samples from the chunk */
 		for (i = 0; i < MAX_SAMPS && nvals < maxvals; i++) {
-			check_gpio_trigger(g_chunk.gpio_lev0[i]);
+			vals[nvals] = (float)g_chunk.samples[i] / 4096.0 * 3.3;
+			gpio_data[nvals] = g_chunk.gpio_lev0[i];
+			nvals++;
 
-			vals[nvals++] = (float)g_chunk.samples[i] / 4096.0 * 3.3;
 			if (verbose && nvals < 10)
 				printf("%1.3f ", vals[nvals-1]);
 		}
@@ -254,15 +256,14 @@ int ring_read_samples(float *vals, int maxvals)
 // Handler for idle events
 void idle_handler(void)
 {
-    int n, i;
+	int n, i;
 
-    if (ring && (n = ring_read_samples(sample_vals, MAX_VALS)) > 0 && !paused)
-    {
-        for (i=0; i<num_chans; i++)
-            update_polyline(&traces[TRACE1_CHAN+i], sample_vals+i, n/num_chans);
-        add_vertex_data();
-    }
-    glutPostRedisplay();
+	if (ring && (n = ring_read_samples(g_sample_vals, g_gpio_vals, MAX_VALS)) > 0 && !paused) {
+		for (i = 0; i < num_chans; i++)
+			update_polyline(&traces[TRACE1_CHAN+i], g_sample_vals+i, g_gpio_vals+i, n/num_chans);
+		add_vertex_data();
+	}
+	glutPostRedisplay();
 }
 
 // Handler for timer events
@@ -413,23 +414,29 @@ int create_polyline(TRACE *tp, float xmin, float ymin, float xmax, float ymax, f
 }
 
 // Update y data in an existing polyline
-void update_polyline(TRACE *tp, float *vals, int np)
+void update_polyline(TRACE *tp, float *vals, uint32_t *gpio_data, int np)
 {
-    int n, start=1;
-    POINT *pts = tp->pts;
-    float val;
+	int n, start = 1;
+	POINT *pts = tp->pts;
+	float val;
 
-    np = np > tp->np-2 ? tp->np-2 : np;
-    for (n=0; n<np; n++)
-    {
-        val = vals[n*num_chans];
-        if (start)
-            pts++->y = val;
-        pts++->y = val;
-        start = 0;
-    }
-    pts->y = val;
-    tp->mod = 1;
+	np = np > tp->np-2 ? tp->np-2 : np;
+	for (n = 0; n < np; n++) {
+		/* Check for trigger before updating this sample */
+		if (check_gpio_trigger(gpio_data[n * num_chans])) {
+			paused = 1;
+			break;  /* Stop drawing at trigger point */
+		}
+
+		val = vals[n * num_chans];
+		if (start)
+			pts++->y = val;
+		pts++->y = val;
+		start = 0;
+	}
+	if (n > 0)
+		pts->y = val;
+	tp->mod = 1;
 }
 
 // Create a trace
