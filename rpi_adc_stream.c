@@ -129,7 +129,8 @@
 #define SPI_TX_FIFO_CLR	(1 << 4)
 #define SPI_TFR_ACT	(1 << 7)
 #define SPI_DMA_EN	(1 << 8)
-#define SPI_AUTO_CS	(1 << 11)
+/* #define SPI_AUTO_CS	(1 << 11) */
+#define SPI_AUTO_CS	(0) //hack. try w/o AUTO_CS
 #define SPI_RXD		(1 << 17)
 #define SPI_CPOL	(1 << 3)
 #define SPI_CPHA	(1 << 2)
@@ -367,6 +368,9 @@ float test_pwm_frequency(MEM_MAP *mp, const uint32_t pwm_range)
 	return(dp->usecs[1] > dp->usecs[0] ? 1e6 / (dp->usecs[1] - dp->usecs[0]) : 0);
 }
 
+#define TX_DATA0 (1 << 11)
+#define TX_DATA1 (2 << 11)
+
 typedef struct {
 	DMA_CB cbs[NUM_CBS];
 	uint32_t samp_size;
@@ -388,7 +392,8 @@ void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_range)
 	ADC_DMA_DATA dma_data = {
 		.samp_size = 2,
 		.pwm_val = pwm_range,
-		.txd={0xd0, g_in_chans>1 ? 0xf0 : 0xd0},
+/*		.txd={0xd0, g_in_chans>1 ? 0xf0 : 0xd0}, */
+		.txd={ TX_DATA0, TX_DATA1},
 		.adc_csd = SPI_TFR_ACT | SPI_AUTO_CS | SPI_DMA_EN |
 			   SPI_FIFO_CLR | ADC_CE_NUM | SPI_CPHA | SPI_CPOL,
 		.usecs = {0, 0},
