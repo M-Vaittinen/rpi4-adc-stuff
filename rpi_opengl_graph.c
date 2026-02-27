@@ -95,6 +95,8 @@ float trace_ymax=TRACE_YMAX;
 
 // GPIO trigger state tracking
 static int trigger_initialized = 0;
+static int g_trigger_detected = 0;	/* Set when trigger first fires */
+static int g_samples_after_trigger = 0; /* Count samples drawn after trigger */
 
 // Shared memory ring buffer
 struct mvaring *ring = NULL;
@@ -217,10 +219,14 @@ static inline int check_gpio_trigger(uint32_t gpio_level)
 	prev_gpio = prev_gpio_state & TRIGGER_MASK;
 
 	if (curr_gpio != prev_gpio) {
-		printf("Trigger detected: GPIO%d changed from %d to %d - Display PAUSED\n",
-		       TRIGGER_GPIO,
-		       prev_gpio ? 1 : 0,
-		       curr_gpio ? 1 : 0);
+		if (!g_trigger_detected) {
+			printf("Trigger detected: GPIO%d changed from %d to %d\n",
+			       TRIGGER_GPIO,
+			       prev_gpio ? 1 : 0,
+			       curr_gpio ? 1 : 0);
+			g_trigger_detected = 1;
+			g_samples_after_trigger = 0;
+		}
 		prev_gpio_state = gpio_level;
 		return 1;
 	}
@@ -417,15 +423,29 @@ int create_polyline(TRACE *tp, float xmin, float ymin, float xmax, float ymax, f
 void update_polyline(TRACE *tp, float *vals, uint32_t *gpio_data, int np)
 {
 	int n, start = 1;
+	int half_screen_samples;
 	POINT *pts = tp->pts;
 	float val;
 
+	half_screen_samples = num_vals / 2;
 	np = np > tp->np-2 ? tp->np-2 : np;
+
 	for (n = 0; n < np; n++) {
 		/* Check for trigger before updating this sample */
-		if (check_gpio_trigger(gpio_data[n * num_chans])) {
-			paused = 1;
-			break;  /* Stop drawing at trigger point */
+		check_gpio_trigger(gpio_data[n * num_chans]);
+
+		/* If trigger was detected, continue drawing until half screen */
+		if (g_trigger_detected) {
+			g_samples_after_trigger++;
+			if (g_samples_after_trigger >= half_screen_samples) {
+				paused = 1;
+				printf("Display PAUSED after %d samples (half screen)\n",
+				       g_samples_after_trigger);
+				/* Reset trigger state for next run */
+				g_trigger_detected = 0;
+				g_samples_after_trigger = 0;
+				break;  /* Stop drawing */
+			}
 		}
 
 		val = vals[n * num_chans];
@@ -600,6 +620,11 @@ void key_handler(unsigned char key, int x, int y)
     case 'P':
         paused = !paused;
         printf("%s\n", paused ? "Paused" : "Running");
+        /* Reset trigger state when manually resuming */
+        if (!paused) {
+            g_trigger_detected = 0;
+            g_samples_after_trigger = 0;
+        }
         break;
     }
 }
