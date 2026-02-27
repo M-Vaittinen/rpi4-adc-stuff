@@ -97,6 +97,9 @@ float trace_ymax=TRACE_YMAX;
 static int trigger_initialized = 0;
 static int g_trigger_detected = 0;	/* Set when trigger first fires */
 static int g_samples_after_trigger = 0; /* Count samples drawn after trigger */
+static float g_trigger_xpos = 0.0;	/* X position where trigger occurred */
+static int g_trigger_direction = 0;	/* 1 = rising (low->high), -1 = falling */
+static int g_show_trigger_arrow = 0;	/* Draw arrow after pause */
 
 // Shared memory ring buffer
 struct mvaring *ring = NULL;
@@ -117,6 +120,9 @@ typedef struct {
 // Traces (grid plus channels)
 TRACE traces[MAX_TRACES];
 int num_chans=NUM_CHANS;
+
+// Trigger arrow indicator (drawn after pause)
+TRACE g_trigger_arrow;
 
 // Buffer for shader compiler messages
 char txtbuff[20000];
@@ -394,6 +400,63 @@ int create_grid(TRACE *tp, int nx, int ny, int z)
     return(tp->np = n);
 }
 
+/*
+ * Create trigger arrow indicator
+ * x: horizontal position where trigger occurred
+ * direction: 1 for rising edge (arrow up), -1 for falling (arrow down)
+ * z: z-value for rendering order
+ */
+int create_trigger_arrow(TRACE *tp, float x, int direction, int z)
+{
+	POINT *p;
+	float y_start, y_end, arrow_height, arrow_width;
+	int n = 0;
+
+	/* Arrow dimensions */
+	arrow_height = (NORM_YMAX - NORM_YMIN) * 0.8;  /* 80% of screen height */
+	arrow_width = (NORM_XMAX - NORM_XMIN) * 0.02;  /* 2% of screen width */
+
+	/* Allocate space for arrow: vertical line (4 pts) + arrowhead (8 pts) */
+	if (!tp->pts)
+		tp->pts = (POINT *)malloc(12 * sizeof(POINT));
+	
+	if (!tp->pts)
+		return 0;
+
+	p = tp->pts;
+
+	if (direction > 0) {
+		/* Rising edge: arrow pointing up */
+		y_start = NORM_YMIN + (NORM_YMAX - NORM_YMIN) * 0.1;
+		y_end = y_start + arrow_height;
+		
+		/* Vertical line */
+		n += move_draw_line(&p[n], x, y_start, x, y_end, z);
+		
+		/* Arrowhead pointing up */
+		n += move_draw_line(&p[n], x - arrow_width, y_end - arrow_width * 2,
+		                    x, y_end, z);
+		n += move_draw_line(&p[n], x, y_end,
+		                    x + arrow_width, y_end - arrow_width * 2, z);
+	} else {
+		/* Falling edge: arrow pointing down */
+		y_end = NORM_YMIN + (NORM_YMAX - NORM_YMIN) * 0.1;
+		y_start = y_end + arrow_height;
+		
+		/* Vertical line */
+		n += move_draw_line(&p[n], x, y_start, x, y_end, z);
+		
+		/* Arrowhead pointing down */
+		n += move_draw_line(&p[n], x - arrow_width, y_end + arrow_width * 2,
+		                    x, y_end, z);
+		n += move_draw_line(&p[n], x, y_end,
+		                    x + arrow_width, y_end + arrow_width * 2, z);
+	}
+
+	tp->mod = 1;
+	return (tp->np = n);
+}
+
 // Create polyline data, given trace values
 int create_polyline(TRACE *tp, float xmin, float ymin, float xmax, float ymax, float *vals, int np, int zval)
 {
@@ -424,6 +487,7 @@ void update_polyline(TRACE *tp, float *vals, uint32_t *gpio_data, int np)
 {
 	int n, start = 1;
 	int half_screen_samples;
+	float x_pos;
 	POINT *pts = tp->pts;
 	float val;
 
@@ -432,13 +496,26 @@ void update_polyline(TRACE *tp, float *vals, uint32_t *gpio_data, int np)
 
 	for (n = 0; n < np; n++) {
 		/* Check for trigger before updating this sample */
-		check_gpio_trigger(gpio_data[n * num_chans]);
+		if (check_gpio_trigger(gpio_data[n * num_chans])) {
+			/* Record trigger position (only on first detection) */
+			if (g_samples_after_trigger == 0) {
+				/* Calculate x position in normalized coordinates */
+				x_pos = NORM_XMIN + (NORM_XMAX - NORM_XMIN) * n / (np - 1);
+				g_trigger_xpos = x_pos;
+				
+				/* Determine direction: rising (1) or falling (-1) */
+				uint32_t curr = gpio_data[n * num_chans] & TRIGGER_MASK;
+				uint32_t prev = (n > 0) ? (gpio_data[(n-1) * num_chans] & TRIGGER_MASK) : 0;
+				g_trigger_direction = (curr > prev) ? 1 : -1;
+			}
+		}
 
 		/* If trigger was detected, continue drawing until half screen */
 		if (g_trigger_detected) {
 			g_samples_after_trigger++;
 			if (g_samples_after_trigger >= half_screen_samples) {
 				paused = 1;
+				g_show_trigger_arrow = 1;  /* Enable arrow drawing */
 				printf("Display PAUSED after %d samples (half screen)\n",
 				       g_samples_after_trigger);
 				/* Reset trigger state for next run */
@@ -519,23 +596,42 @@ void reshape(int width, int height)
 // If vertex buffer doesn't exist, create it
 int add_vertex_data(void)
 {
-    int i, npts;
+	int i, npts;
 
-    if (!vert_buff_alloc)
-    {
-        for(i=npts=0; traces[i].np>0; i++)
-            npts += traces[i].np;
-        glBufferData(GL_ARRAY_BUFFER, npts*sizeof(POINT), 0, GL_STATIC_DRAW);
-        vert_buff_alloc = 1;
-    }
-    for(i=npts=0; traces[i].np>0; i++)
-    {
-        if (traces[i].mod)
-            glBufferSubData(GL_ARRAY_BUFFER, npts*sizeof(POINT),
-                traces[i].np*sizeof(POINT), traces[i].pts);
-        npts += traces[i].np;
-    }
-    return(npts);
+	/* Draw trigger arrow if flag is set */
+	if (g_show_trigger_arrow && g_trigger_arrow.np == 0) {
+		create_trigger_arrow(&g_trigger_arrow, g_trigger_xpos,
+		                     g_trigger_direction, TRACE1_CHAN + num_chans);
+	}
+
+	if (!vert_buff_alloc) {
+		for (i = npts = 0; traces[i].np > 0; i++)
+			npts += traces[i].np;
+		
+		/* Add space for trigger arrow if shown */
+		if (g_show_trigger_arrow && g_trigger_arrow.np > 0)
+			npts += g_trigger_arrow.np;
+		
+		glBufferData(GL_ARRAY_BUFFER, npts*sizeof(POINT), 0, GL_STATIC_DRAW);
+		vert_buff_alloc = 1;
+	}
+	
+	for (i = npts = 0; traces[i].np > 0; i++) {
+		if (traces[i].mod)
+			glBufferSubData(GL_ARRAY_BUFFER, npts*sizeof(POINT),
+			                traces[i].np*sizeof(POINT), traces[i].pts);
+		npts += traces[i].np;
+	}
+	
+	/* Upload trigger arrow data if present */
+	if (g_show_trigger_arrow && g_trigger_arrow.np > 0 && g_trigger_arrow.mod) {
+		glBufferSubData(GL_ARRAY_BUFFER, npts*sizeof(POINT),
+		                g_trigger_arrow.np*sizeof(POINT), g_trigger_arrow.pts);
+		npts += g_trigger_arrow.np;
+		g_trigger_arrow.mod = 0;
+	}
+	
+	return npts;
 }
 
 // Initialise graph
@@ -624,6 +720,12 @@ void key_handler(unsigned char key, int x, int y)
         if (!paused) {
             g_trigger_detected = 0;
             g_samples_after_trigger = 0;
+            g_show_trigger_arrow = 0;
+            if (g_trigger_arrow.pts) {
+                free(g_trigger_arrow.pts);
+                g_trigger_arrow.pts = NULL;
+                g_trigger_arrow.np = 0;
+            }
         }
         break;
     }
