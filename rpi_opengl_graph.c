@@ -119,7 +119,6 @@ int num_chans=NUM_CHANS;
 // GPIO trigger state (after TRACE typedef)
 static int g_trigger_detected = 0;      /* Set when trigger edge detected */
 static int g_samples_after_trigger = 0; /* Count samples drawn after trigger */
-static uint32_t g_prev_gpio = 0;        /* Previous GPIO state for edge detection */
 static int g_trigger_direction = 0;     /* 1 = rising, -1 = falling */
 static TRACE g_trigger_line;            /* Vertical line at trigger point */
 static int g_show_trigger_line = 0;     /* Flag to show trigger line */
@@ -446,7 +445,6 @@ void update_polyline(TRACE *tp, float *vals, uint32_t *gpio_data, int np)
 {
 	int n, start = 1;
 	int half_screen_samples;
-	int zval = (int)(tp->pts->z);  /* Get base z-value for color */
 	POINT *pts = tp->pts;
 	float val;
 
