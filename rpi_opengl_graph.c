@@ -94,7 +94,6 @@ int args, verbose, vert_buff_alloc, paused;
 float trace_ymax=TRACE_YMAX;
 
 // GPIO trigger state tracking
-static uint32_t prev_gpio_state = 0;
 static int trigger_initialized = 0;
 
 // Shared memory ring buffer
@@ -196,37 +195,52 @@ int init_shmem(struct shmem_info *in)
 
 struct adc_data g_chunk;
 
-// Read ADC samples from ring buffer
+/*
+ * Check GPIO trigger and pause display if state changed
+ * Returns: 1 if trigger fired (edge detected), 0 otherwise
+ */
+static inline int check_gpio_trigger(uint32_t gpio_level)
+{
+	static uint32_t prev_gpio_state = 0;
+	uint32_t curr_gpio, prev_gpio;
+
+	curr_gpio = gpio_level & TRIGGER_MASK;
+
+	if (!trigger_initialized) {
+		trigger_initialized = 1;
+		prev_gpio_state = gpio_level;
+		return 0;
+	}
+
+	prev_gpio = prev_gpio_state & TRIGGER_MASK;
+
+	if (curr_gpio != prev_gpio) {
+		paused = 1;
+		printf("Trigger detected: GPIO%d changed from %d to %d - Display PAUSED\n",
+		       TRIGGER_GPIO,
+		       prev_gpio ? 1 : 0,
+		       curr_gpio ? 1 : 0);
+		prev_gpio_state = gpio_level;
+		return 1;
+	}
+
+	prev_gpio_state = gpio_level;
+	return 0;
+}
+
+/* Read ADC samples from ring buffer */
 int ring_read_samples(float *vals, int maxvals)
 {
 	int nvals = 0;
 	int chunks_to_read = 1;
+	int i;
 
 	while (nvals < maxvals && ring_read(ring, &g_chunk, chunks_to_read) > 0) {
 		/* Read all samples from the chunk */
-		for (int i = 0; i < MAX_SAMPS && nvals < maxvals; i++) {
-			/* Check GPIO trigger state for this sample */
-			uint32_t curr_gpio = g_chunk.gpio_lev0[i] & TRIGGER_MASK;
+		for (i = 0; i < MAX_SAMPS && nvals < maxvals; i++) {
+			check_gpio_trigger(g_chunk.gpio_lev0[i]);
 
-			if (trigger_initialized) {
-				/* Detect trigger change (rising or falling edge) */
-				uint32_t prev_gpio = prev_gpio_state & TRIGGER_MASK;
-
-				if (curr_gpio != prev_gpio) {
-					paused = 1;
-					printf("Trigger detected: GPIO%d changed from %d to %d - Display PAUSED\n",
-					       TRIGGER_GPIO,
-					       prev_gpio ? 1 : 0,
-					       curr_gpio ? 1 : 0);
-				}
-			} else {
-				/* Initialize trigger state on first read */
-				trigger_initialized = 1;
-			}
-
-			prev_gpio_state = g_chunk.gpio_lev0[i];
-
-			vals[nvals++] = (float)g_chunk.samples[i] / 4096.0 * 3.3;  // Convert to voltage
+			vals[nvals++] = (float)g_chunk.samples[i] / 4096.0 * 3.3;
 			if (verbose && nvals < 10)
 				printf("%1.3f ", vals[nvals-1]);
 		}
