@@ -1,0 +1,14 @@
+out/data_out
+ai-gen-tests/*
+rpi_adc_bufextract
+rpi_adc_stream
+test-ui
+rpi_adc_bufextract_dbg
+rpi_adc_stream_dbg
+test-ui_dbg
+*.bak
+*.bak2
+*.old
+pilotloitsu
+*.swp
+test/gpioset.output
