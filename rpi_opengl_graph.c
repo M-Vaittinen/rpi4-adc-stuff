@@ -86,7 +86,6 @@ float trace_ymax=TRACE_YMAX;
 
 // Shared memory ring buffer
 struct mvaring *ring = NULL;
-int shmem_fd = -1;
 
 // Structure for a 3D point
 typedef struct {
@@ -162,98 +161,40 @@ char vert_shader[] =
 int add_vertex_data(void);
 void update_polyline(TRACE *tp, float *vals, int np);
 void do_graph(void);
-int init_shmem(void);
-
-int main(int argc, char *argv[])
-{
-    printf("RPi streaming display v" VERSION "\n");
-    glutInit(&argc, argv);
-
-    if (!init_shmem())
-    {
-        printf("Can't open shared memory ring buffer\n");
-        return 1;
-    }
-    printf("Reading from shared memory ring buffer\n");
-
-    while (argc > ++args)               // Process command-line args
-    {
-        if (argv[args][0] == '-')
-        {
-            switch (toupper(argv[args][1]))
-            {
-            case 'I':                   // -I: number of input channels
-                if (args>=argc-1 || !isdigit((int)argv[args+1][0]))
-                    fprintf(stderr, "Error: no input chan count\n");
-                else
-                    num_chans = atoi(argv[++args]);
-                break;
-            case 'N':                   // -N: number of values per block
-                if (args>=argc-1 || !isdigit((int)argv[args+1][0]) ||
-                    (num_vals = atoi(argv[++args])) < 1)
-                    fprintf(stderr, "Error: no sample count\n");
-                else if (num_vals > MAX_VALS)
-                {
-                    fprintf(stderr, "Error: maximum sample count %u\n", MAX_VALS);
-                    num_vals = MAX_VALS;
-                }
-                break;
-            case 'V':                   // -V: verbose mode (display hex data)
-                verbose = 1;
-                break;
-            case 'Y':                   // -Y: max y-value for each chan
-                if (args>=argc-1 || !isdigit((int)argv[args+1][0]))
-                    fprintf(stderr, "Error: no max y-value\n");
-                else if (!(trace_ymax = atof(argv[++args])))
-                {
-                    fprintf(stderr, "Error: invalid max y-value\n");
-                    trace_ymax = TRACE_YMAX;
-                }
-                break;
-            default:
-                printf("Error: unrecognised option '%s'\n", argv[args]);
-                exit(1);
-            }
-        }
-    }
-    chan_vals = num_vals / num_chans;
-    do_graph();
-}
 
 // Initialize shared memory ring buffer
-int init_shmem(void)
+int init_shmem(struct shmem_info *in)
 {
-    shmem_fd = shm_open(SHM_NAME, O_RDONLY, 0);
-    if (shmem_fd < 0)
-    {
-        perror("shm_open");
-        return 0;
-    }
+	int ret;
 
-    ring = mmap(NULL, sizeof(struct mvaring), PROT_READ, MAP_SHARED, shmem_fd, 0);
-    if (ring == MAP_FAILED)
-    {
-        perror("mmap");
-        close(shmem_fd);
-        return 0;
-    }
+	ret = shmem_open(SHM_NAME, SHM_SIZE, in);
+	if (ret) {
+		printf("Nooo\n");
+		return ret;
+	}
 
-    return 1;
+	ring = in->buff;
+
+	while (!ring_is_ok(ring))
+		sleep(0);
+
+	return 0;
 }
+
+struct adc_data g_chunk;
 
 // Read ADC samples from ring buffer
 int ring_read_samples(float *vals, int maxvals)
 {
-    struct adc_data chunk;
     int nvals = 0;
     int chunks_to_read = 1;
 
-    while (nvals < maxvals && ring_read(ring, &chunk, chunks_to_read) > 0)
+    while (nvals < maxvals && ring_read(ring, &g_chunk, chunks_to_read) > 0)
     {
         // Read all samples from the chunk
         for (int i = 0; i < MAX_SAMPS && nvals < maxvals; i++)
         {
-            vals[nvals++] = (float)chunk.samples[i] / 4096.0 * 3.3;  // Convert to voltage
+            vals[nvals++] = (float)g_chunk.samples[i] / 4096.0 * 3.3;  // Convert to voltage
             if (verbose && nvals < 10)
                 printf("%1.3f ", vals[nvals-1]);
         }
@@ -587,16 +528,6 @@ void graph_display()
 void graph_free()
 {
     glDeleteProgram(program);
-    if (ring)
-    {
-        munmap(ring, sizeof(struct mvaring));
-        ring = NULL;
-    }
-    if (shmem_fd >= 0)
-    {
-        close(shmem_fd);
-        shmem_fd = -1;
-    }
 }
 
 // Handle keystrokes
@@ -648,5 +579,68 @@ void do_graph(void)
     }
     graph_free();
 }
+
+int main(int argc, char *argv[])
+{
+    struct shmem_info in;
+    int ret;
+
+    printf("RPi streaming display v" VERSION "\n");
+    glutInit(&argc, argv);
+
+    ret = init_shmem(&in);
+    if (ret)
+    {
+        printf("Can't open shared memory ring buffer\n");
+        return ret;
+    }
+    printf("Reading from shared memory ring buffer\n");
+
+    while (argc > ++args)               // Process command-line args
+    {
+        if (argv[args][0] == '-')
+        {
+            switch (toupper(argv[args][1]))
+            {
+            case 'I':                   // -I: number of input channels
+                if (args>=argc-1 || !isdigit((int)argv[args+1][0]))
+                    fprintf(stderr, "Error: no input chan count\n");
+                else
+                    num_chans = atoi(argv[++args]);
+                break;
+            case 'N':                   // -N: number of values per block
+                if (args>=argc-1 || !isdigit((int)argv[args+1][0]) ||
+                    (num_vals = atoi(argv[++args])) < 1)
+                    fprintf(stderr, "Error: no sample count\n");
+                else if (num_vals > MAX_VALS)
+                {
+                    fprintf(stderr, "Error: maximum sample count %u\n", MAX_VALS);
+                    num_vals = MAX_VALS;
+                }
+                break;
+            case 'V':                   // -V: verbose mode (display hex data)
+                verbose = 1;
+                break;
+            case 'Y':                   // -Y: max y-value for each chan
+                if (args>=argc-1 || !isdigit((int)argv[args+1][0]))
+                    fprintf(stderr, "Error: no max y-value\n");
+                else if (!(trace_ymax = atof(argv[++args])))
+                {
+                    fprintf(stderr, "Error: invalid max y-value\n");
+                    trace_ymax = TRACE_YMAX;
+                }
+                break;
+            default:
+                printf("Error: unrecognised option '%s'\n", argv[args]);
+                exit(1);
+            }
+        }
+    }
+    chan_vals = num_vals / num_chans;
+    do_graph();
+
+    shmem_close(&in);
+}
+
 
 // EOF
