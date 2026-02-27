@@ -95,10 +95,12 @@ float trace_ymax=TRACE_YMAX;
 
 // GPIO trigger state tracking
 static int trigger_initialized = 0;
-static int g_trigger_detected = 0;	/* Set when trigger first fires */
+static int g_trigger_detected = 0;      /* Set when trigger edge detected */
 static int g_samples_after_trigger = 0; /* Count samples drawn after trigger */
-static int g_trigger_direction = 0;	/* 1 = rising (low->high), -1 = falling */
-static int g_trigger_sample_index = 0;	/* Sample index where trigger occurred */
+static uint32_t g_prev_gpio = 0;        /* Previous GPIO state for edge detection */
+static int g_trigger_direction = 0;     /* 1 = rising, -1 = falling */
+static TRACE g_trigger_line;            /* Vertical line at trigger point */
+static int g_show_trigger_line = 0;     /* Flag to show trigger line */
 
 // Shared memory ring buffer
 struct mvaring *ring = NULL;
@@ -396,6 +398,27 @@ int create_grid(TRACE *tp, int nx, int ny, int z)
     return(tp->np = n);
 }
 
+/* Create vertical trigger line at center of screen */
+int create_trigger_line(TRACE *tp, int z)
+{
+    POINT *p;
+    int n = 0;
+
+    if (!tp->pts)
+        tp->pts = (POINT *)malloc(4 * sizeof(POINT));
+    
+    if (!tp->pts)
+        return 0;
+
+    p = tp->pts;
+    
+    /* Vertical line at center of screen */
+    n += move_draw_line(p, 0.0, NORM_YMIN, 0.0, NORM_YMAX, z);
+    
+    tp->mod = 1;
+    return (tp->np = n);
+}
+
 // Create polyline data, given trace values
 int create_polyline(TRACE *tp, float xmin, float ymin, float xmax, float ymax, float *vals, int np, int zval)
 {
@@ -554,9 +577,18 @@ int add_vertex_data(void)
 {
 	int i, npts;
 
+	/* Create trigger line if needed */
+	if (g_show_trigger_line && g_trigger_line.np == 0) {
+		create_trigger_line(&g_trigger_line, TRACE1_CHAN + num_chans);
+	}
+
 	if (!vert_buff_alloc) {
 		for (i = npts = 0; traces[i].np > 0; i++)
 			npts += traces[i].np;
+		
+		/* Add space for trigger line */
+		if (g_show_trigger_line && g_trigger_line.np > 0)
+			npts += g_trigger_line.np;
 		
 		glBufferData(GL_ARRAY_BUFFER, npts*sizeof(POINT), 0, GL_STATIC_DRAW);
 		vert_buff_alloc = 1;
@@ -567,6 +599,14 @@ int add_vertex_data(void)
 			glBufferSubData(GL_ARRAY_BUFFER, npts*sizeof(POINT),
 			                traces[i].np*sizeof(POINT), traces[i].pts);
 		npts += traces[i].np;
+	}
+	
+	/* Upload trigger line if shown */
+	if (g_show_trigger_line && g_trigger_line.np > 0 && g_trigger_line.mod) {
+		glBufferSubData(GL_ARRAY_BUFFER, npts*sizeof(POINT),
+		                g_trigger_line.np*sizeof(POINT), g_trigger_line.pts);
+		npts += g_trigger_line.np;
+		g_trigger_line.mod = 0;
 	}
 	
 	return npts;
@@ -658,7 +698,12 @@ void key_handler(unsigned char key, int x, int y)
         if (!paused) {
             g_trigger_detected = 0;
             g_samples_after_trigger = 0;
-            g_trigger_sample_index = 0;
+            g_show_trigger_line = 0;
+            if (g_trigger_line.pts) {
+                free(g_trigger_line.pts);
+                g_trigger_line.pts = NULL;
+                g_trigger_line.np = 0;
+            }
         }
         break;
     }
