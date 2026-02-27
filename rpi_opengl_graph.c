@@ -207,12 +207,15 @@ struct adc_data g_chunk;
 
 /*
  * Check GPIO trigger and pause display if state changed
+ * gpio_data: array of GPIO values
+ * idx: index into gpio_data array
  * Returns: 1 if trigger fired (edge detected), 0 otherwise
  */
-static inline int check_gpio_trigger(uint32_t gpio_level)
+static inline int check_gpio_trigger(uint32_t *gpio_data, int idx)
 {
 	static uint32_t prev_gpio_state = 0;
 	uint32_t curr_gpio, prev_gpio;
+	uint32_t gpio_level = gpio_data[idx];
 
 	curr_gpio = gpio_level & TRIGGER_MASK;
 
@@ -225,16 +228,8 @@ static inline int check_gpio_trigger(uint32_t gpio_level)
 	prev_gpio = prev_gpio_state & TRIGGER_MASK;
 
 	if (curr_gpio != prev_gpio) {
-		if (!g_trigger_detected) {
-			printf("Trigger detected: GPIO%d changed from %d to %d\n",
-			       TRIGGER_GPIO,
-			       prev_gpio ? 1 : 0,
-			       curr_gpio ? 1 : 0);
-			g_trigger_detected = 1;
-			g_samples_after_trigger = 0;
-		}
 		prev_gpio_state = gpio_level;
-		return 1;
+		return 1;  /* Edge detected */
 	}
 
 	prev_gpio_state = gpio_level;
