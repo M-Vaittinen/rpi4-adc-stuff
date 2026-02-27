@@ -60,6 +60,15 @@
 #define TIMER_MSEC      1000        // Time for FPS calculation
 #define GLUT_MODE       GLUT_SINGLE // Single or double-buffering
 
+/*
+ * GPIO trigger configuration
+ * GPIO level register (GPLEV0) reads GPIO pins 0-31 as a 32-bit word
+ * BCM2711 ARM Peripherals (RP-008248-DS), Section 5.2
+ * Each GPIO pin is represented by one bit in the register
+ */
+#define TRIGGER_GPIO    25          // GPIO pin used for trigger  
+#define TRIGGER_MASK    (1U << TRIGGER_GPIO) // Bit 25 in GPIO level register
+
 // Macro to convert hex colour RGB value to normalised RGBA value
 #define COLR(x) {(x>>16&255)/255.0, (x>>8&255)/255.0, (x&255)/255.0, 1}
 
@@ -83,6 +92,10 @@ int nvertices, frame_count, win_width, win_height, num_vals=NUM_VALS;
 int chan_vals;
 int args, verbose, vert_buff_alloc, paused;
 float trace_ymax=TRACE_YMAX;
+
+// GPIO trigger state tracking
+static uint32_t prev_gpio_state = 0;
+static int trigger_initialized = 0;
 
 // Shared memory ring buffer
 struct mvaring *ring = NULL;
@@ -186,23 +199,42 @@ struct adc_data g_chunk;
 // Read ADC samples from ring buffer
 int ring_read_samples(float *vals, int maxvals)
 {
-    int nvals = 0;
-    int chunks_to_read = 1;
+	int nvals = 0;
+	int chunks_to_read = 1;
 
-    while (nvals < maxvals && ring_read(ring, &g_chunk, chunks_to_read) > 0)
-    {
-        // Read all samples from the chunk
-        for (int i = 0; i < MAX_SAMPS && nvals < maxvals; i++)
-        {
-            vals[nvals++] = (float)g_chunk.samples[i] / 4096.0 * 3.3;  // Convert to voltage
-            if (verbose && nvals < 10)
-                printf("%1.3f ", vals[nvals-1]);
-        }
-    }
-    if (verbose && nvals)
-        printf("\n");
+	while (nvals < maxvals && ring_read(ring, &g_chunk, chunks_to_read) > 0) {
+		/* Read all samples from the chunk */
+		for (int i = 0; i < MAX_SAMPS && nvals < maxvals; i++) {
+			/* Check GPIO trigger state for this sample */
+			uint32_t curr_gpio = g_chunk.gpio_lev0[i] & TRIGGER_MASK;
 
-    return nvals;
+			if (trigger_initialized) {
+				/* Detect trigger change (rising or falling edge) */
+				uint32_t prev_gpio = prev_gpio_state & TRIGGER_MASK;
+
+				if (curr_gpio != prev_gpio) {
+					paused = 1;
+					printf("Trigger detected: GPIO%d changed from %d to %d - Display PAUSED\n",
+					       TRIGGER_GPIO,
+					       prev_gpio ? 1 : 0,
+					       curr_gpio ? 1 : 0);
+				}
+			} else {
+				/* Initialize trigger state on first read */
+				trigger_initialized = 1;
+			}
+
+			prev_gpio_state = g_chunk.gpio_lev0[i];
+
+			vals[nvals++] = (float)g_chunk.samples[i] / 4096.0 * 3.3;  // Convert to voltage
+			if (verbose && nvals < 10)
+				printf("%1.3f ", vals[nvals-1]);
+		}
+	}
+	if (verbose && nvals)
+		printf("\n");
+
+	return nvals;
 }
 
 // Handler for idle events
