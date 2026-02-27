@@ -95,12 +95,6 @@ float trace_ymax=TRACE_YMAX;
 
 // GPIO trigger state tracking
 static int trigger_initialized = 0;
-static int g_trigger_detected = 0;      /* Set when trigger edge detected */
-static int g_samples_after_trigger = 0; /* Count samples drawn after trigger */
-static uint32_t g_prev_gpio = 0;        /* Previous GPIO state for edge detection */
-static int g_trigger_direction = 0;     /* 1 = rising, -1 = falling */
-static TRACE g_trigger_line;            /* Vertical line at trigger point */
-static int g_show_trigger_line = 0;     /* Flag to show trigger line */
 
 // Shared memory ring buffer
 struct mvaring *ring = NULL;
@@ -121,6 +115,14 @@ typedef struct {
 // Traces (grid plus channels)
 TRACE traces[MAX_TRACES];
 int num_chans=NUM_CHANS;
+
+// GPIO trigger state (after TRACE typedef)
+static int g_trigger_detected = 0;      /* Set when trigger edge detected */
+static int g_samples_after_trigger = 0; /* Count samples drawn after trigger */
+static uint32_t g_prev_gpio = 0;        /* Previous GPIO state for edge detection */
+static int g_trigger_direction = 0;     /* 1 = rising, -1 = falling */
+static TRACE g_trigger_line;            /* Vertical line at trigger point */
+static int g_show_trigger_line = 0;     /* Flag to show trigger line */
 
 // Buffer for shader compiler messages
 char txtbuff[20000];
@@ -457,12 +459,11 @@ void update_polyline(TRACE *tp, float *vals, uint32_t *gpio_data, int np)
 	np = np > tp->np-2 ? tp->np-2 : np;
 
 	for (n = 0; n < np; n++) {
-		/* Check for trigger before updating this sample */
-		if (check_gpio_trigger(gpio_data[n * num_chans])) {
-			/* Record trigger info (only on first detection) */
+		/* Check for trigger if not already detected */
+		if (!g_trigger_detected && check_gpio_trigger(gpio_data, n * num_chans)) {
+			g_trigger_detected = 1;
+			
 			if (g_samples_after_trigger == 0) {
-				g_trigger_sample_index = n;
-				
 				/* Determine direction: rising (1) or falling (-1) */
 				uint32_t curr = gpio_data[n * num_chans] & TRIGGER_MASK;
 				uint32_t prev = (n > 0) ? (gpio_data[(n-1) * num_chans] & TRIGGER_MASK) : 0;
@@ -477,29 +478,14 @@ void update_polyline(TRACE *tp, float *vals, uint32_t *gpio_data, int np)
 		if (g_trigger_detected) {
 			g_samples_after_trigger++;
 			if (g_samples_after_trigger >= half_screen_samples) {
-				paused = 1;
-				printf("Display PAUSED after %d samples (half screen)\n",
+				printf("Pausing after %d samples post-trigger\n", 
 				       g_samples_after_trigger);
-				
-				/* Now change color of points after trigger */
-				/* Go back and change z-values for post-trigger samples */
-				int trigger_pt_idx = g_trigger_sample_index * 2;  /* Each sample = 2 points */
-				POINT *p = &tp->pts[trigger_pt_idx];
-				int pts_to_change = g_samples_after_trigger * 2;
-				int i;
-				
-				printf("Changing color: from point %d, count %d, using color index %d\n",
-				       trigger_pt_idx, pts_to_change, zval + 1);
-				
-				/* Change to next color in palette (zval + 1) */
-				for (i = 0; i < pts_to_change && (trigger_pt_idx + i) < tp->np; i++) {
-					p[i].z = ZEN(zval + 1);
-				}
+				paused = 1;
+				g_show_trigger_line = 1;
 				
 				/* Reset trigger state for next run */
 				g_trigger_detected = 0;
 				g_samples_after_trigger = 0;
-				g_trigger_sample_index = 0;
 				break;  /* Stop drawing */
 			}
 		}
