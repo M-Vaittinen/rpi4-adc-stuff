@@ -68,7 +68,7 @@ static int test_write_item(struct mvaring *mr)
 			printf("sending\n");
 			dbg_adcdata(&g_txdata, i);
 		}*/
-		ring_add(mr, &g_txdata);
+		ring_add(mr, &g_txdata, false);
 /*		{
 			if (!foo) {
 				int ret;

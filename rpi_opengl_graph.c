@@ -487,7 +487,6 @@ void update_polyline(TRACE *tp, float *vals, uint32_t *gpio_data, int np)
 {
 	int n, start = 1;
 	int half_screen_samples;
-	float x_pos;
 	POINT *pts = tp->pts;
 	float val;
 
@@ -497,12 +496,8 @@ void update_polyline(TRACE *tp, float *vals, uint32_t *gpio_data, int np)
 	for (n = 0; n < np; n++) {
 		/* Check for trigger before updating this sample */
 		if (check_gpio_trigger(gpio_data[n * num_chans])) {
-			/* Record trigger position (only on first detection) */
+			/* Record trigger direction (only on first detection) */
 			if (g_samples_after_trigger == 0) {
-				/* Calculate x position in normalized coordinates */
-				x_pos = NORM_XMIN + (NORM_XMAX - NORM_XMIN) * n / (np - 1);
-				g_trigger_xpos = x_pos;
-				
 				/* Determine direction: rising (1) or falling (-1) */
 				uint32_t curr = gpio_data[n * num_chans] & TRIGGER_MASK;
 				uint32_t prev = (n > 0) ? (gpio_data[(n-1) * num_chans] & TRIGGER_MASK) : 0;
@@ -516,6 +511,13 @@ void update_polyline(TRACE *tp, float *vals, uint32_t *gpio_data, int np)
 			if (g_samples_after_trigger >= half_screen_samples) {
 				paused = 1;
 				g_show_trigger_arrow = 1;  /* Enable arrow drawing */
+				
+				/*
+				 * Arrow position: trigger occurred half_screen_samples ago,
+				 * so it should be at middle of screen (we drew half screen after it)
+				 */
+				g_trigger_xpos = (NORM_XMIN + NORM_XMAX) / 2.0;
+				
 				printf("Display PAUSED after %d samples (half screen)\n",
 				       g_samples_after_trigger);
 				/* Reset trigger state for next run */
