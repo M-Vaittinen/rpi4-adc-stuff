@@ -11,6 +11,9 @@
 #include "rpi_shmem.h"
 #include "mvaring.h"
 
+/* Uncomment this to prevent SHM clean-up at terminate */
+// #define KEEP_SHM_BUF
+
 /* TODO: Use real bitmask (12 bits?) */
 #define ADC_BITMASK 0xffff
 
@@ -121,9 +124,29 @@ static void print_usage(const char *prog_name)
 	printf("\nOutput file: out/data_out\n");
 }
 
+static int rpi_shm_create(struct shmem_info *shi, struct mvaring **mr)
+{
+	int ret;
+
+	ret = shmem_create(SHM_NAME, SHM_SIZE, shi);
+	if (ret) {
+		printf("shmem_create failed. Name %s, size %lu\n", SHM_NAME, (unsigned long)SHM_SIZE);
+
+		return ret;
+	}
+
+	*mr = ring_init(shi->buff, SHM_SIZE);
+	if (!*mr) {
+		printf("Ringbuffer init failed\n");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
-	struct shmem_info in;
+	struct shmem_info in = {0};
 	struct mvaring *mr;
 	uint32_t nsec_delta;
 	int ret;
@@ -181,16 +204,12 @@ int main(int argc, char *argv[])
 	else
 		fprintf(wf, "# timestamp(ns)\tadc_value\n");
 
-	ret = shmem_open(SHM_NAME, SHM_SIZE, &in);
+	/* Create shared memory area */
+	ret = rpi_shm_create(&in, &mr);
 	if (ret) {
 		printf("Nooo\n");
 		return ret;
 	}
-
-	mr = in.buff;
-
-	while (!ring_is_ok(mr))
-		sleep(0);
 
 	for (ret = 0; ret >= 0 && ret < 2;) {
 		ret = ring_read(mr, &start_data[ret], 2 - ret);
@@ -225,7 +244,10 @@ err_out:
 		printf("FAIL! %d\n", ret);
 	}
 	fclose(wf);
-	shmem_close(&in);
+#ifndef KEEP_SHM_BUF
+	if (in.buff)
+		shmem_destroy(&in);
+#endif
 
 	return ret;
 }

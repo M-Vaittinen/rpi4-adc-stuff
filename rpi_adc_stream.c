@@ -16,9 +16,6 @@
 //
 // v0.20 JPB 16/11/20 Tidied up for first Github release
 
-/* Uncomment this to prevent SHM clean-up at terminate */
-// #define KEEP_SHM_BUF
-
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -203,10 +200,9 @@ void terminate(int sig)
 	if (g_samp_total)
 		printf("Total samples %u, overruns %u\n", g_samp_total, g_overrun_total);
 
-#ifndef KEEP_SHM_BUF
 	if (g_shm_info.buff)
-		shmem_destroy(&g_shm_info);
-#endif
+		shmem_close(&g_shm_info);
+
 	exit(0);
 }
 
@@ -693,24 +689,25 @@ int main(int argc, char *argv[])
 	}
 
 	/*
-	 * TODO: The reader could create the shm and the ring-buffer.
-	 * Here we would just call the shmem_open() and perform check: ring_is_ok()
-	 *
-	 * Benefit would be that the reader would be ready when we start writing,
-	 * which would give us clean drop-counters to start with.
+	 * Try opening until it succeeds
+	 * TODO: Add a time-out.
 	 */
+	do {
+		ret = shmem_open(SHM_NAME, SHM_SIZE, &g_shm_info, true);
+		if (ret) {
+			if (ret != -ENOENT) {
+				printf("Nooo\n");
 
-	ret = shmem_create(SHM_NAME, SHM_SIZE, &g_shm_info);
-	if (ret) {
-		printf("shmem_create failed. Name %s, size %lu\n", SHM_NAME, (unsigned long)SHM_SIZE);
-		return ret;
-	}
+				return ret;
+			}
+			sleep(0);
+		}
+	} while (ret);
 
-	mr = ring_init(g_shm_info.buff, SHM_SIZE);
-	if (!mr) {
-		printf("Ringbuffer init failed\n");
-		return -EINVAL;
-	}
+	mr = g_shm_info.buff;
+
+	while (!ring_is_ok(mr))
+		sleep(0);
 
 	map_devices();
 	gpio_trigger_init();
