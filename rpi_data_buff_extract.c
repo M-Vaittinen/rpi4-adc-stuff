@@ -11,18 +11,18 @@
 #include "rpi_shmem.h"
 #include "mvaring.h"
 
-/* Uncomment this to prevent SHM clean-up at terminate */
-// #define KEEP_SHM_BUF
-
 /* TODO: Use real bitmask (12 bits?) */
 #define ADC_BITMASK 0xffff
 
 static struct adc_data data[10];
 /* first 2 chuncks of data to guesstimate clk */
 static struct adc_data start_data[2];
-static bool g_output_gpio = true;  /* Output GPIO data by default */
-static int g_trigger_gpio = 25;    /* Default trigger GPIO */
-static uint32_t g_gpio_mask = 0;   /* Computed based on trigger GPIO */
+static bool g_output_gpio = true;	/* Output GPIO data by default */
+static int g_trigger_gpio = 25;		/* Default trigger GPIO */
+static uint32_t g_gpio_mask = 0;	/* Computed based on trigger GPIO */
+static bool g_keep_buffer;		/* Keep the shared-memory after shutdown */
+static bool g_use_old_buff;		/* Use existing SHM */
+static bool g_shm_drop;			/* Drop SHM and exit */
 
 struct gpio_info {
 	int gpio;
@@ -114,9 +114,12 @@ static void print_usage(const char *prog_name)
 	printf("Usage: %s [options]\n", prog_name);
 	printf("Extract ADC data from shared memory ring buffer\n\n");
 	printf("Options:\n");
+	printf("  -d  --drop-buffer      Drop shared-memory buffer and exit\n");
 	printf("  -g, --no-gpio          Disable GPIO output (ADC only)\n");
 	printf("  -t, --trigger-gpio=N   Specify trigger GPIO (default: 25)\n");
+	printf("  -k  --keep-buffer      Keep shared-memory after shutdown\n");
 	printf("  -l, --list-gpios       List available trigger GPIOs\n");
+	printf("  -o  --old-buffer       Use existing shared-memory\n");
 	printf("  -h, --help             Show this help message\n\n");
 	printf("Output format:\n");
 	printf("  With GPIO (default): timestamp(ns)  adc_value  gpio_state(hex)\n");
@@ -155,18 +158,30 @@ int main(int argc, char *argv[])
 	FILE *wf;
 
 	static struct option long_options[] = {
-		{"no-gpio",      no_argument,       NULL, 'g'},
-		{"trigger-gpio", required_argument, NULL, 't'},
-		{"list-gpios",   no_argument,       NULL, 'l'},
-		{"help",         no_argument,       NULL, 'h'},
+		{"no-gpio",	no_argument,		NULL, 'g'},
+		{"help",	no_argument,		NULL, 'h'},
+		{"drop-buffer",	no_argument,		NULL, 'd'},
+		{"keep-buffer",	no_argument,		NULL, 'k'},
+		{"list-gpios",	no_argument,		NULL, 'l'},
+		{"old-buffer",	no_argument,		NULL, 'o'},
+		{"trigger-gpio",required_argument,	NULL, 't'},
 		{NULL,           0,                 NULL, 0}
 	};
 
 	/* Parse command line arguments */
-	while ((opt = getopt_long(argc, argv, "gt:lh", long_options, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "dghklot:", long_options, NULL)) != -1) {
 		switch (opt) {
+		case 'd':
+			g_shm_drop = true;
+			break;
 		case 'g':
 			g_output_gpio = false;
+			break;
+		case 'k':
+			g_keep_buffer = true;
+			break;
+		case 'o':
+			g_use_old_buff = true;
 			break;
 		case 't':
 			g_trigger_gpio = atoi(optarg);
@@ -188,14 +203,44 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	if (g_shm_drop && g_keep_buffer) {
+		fprintf(stderr, "Error: Can't keep and drop buffer (-k and -o)\n");
+		print_usage(argv[0]);
+
+		return EINVAL;
+	}
+
 	/* Compute GPIO mask based on trigger GPIO */
 	g_gpio_mask = 1u << g_trigger_gpio;
 	
-	wf = fopen("out/data_out", "w");
-	if (!wf) {
-		ret = errno;
-		perror("fopen");
+	/* Create or open shared memory area */
+	if (g_use_old_buff) {
+		ret = shmem_open(SHM_NAME, SHM_SIZE, &in, false);
+		mr = in.buff;
+	} else {
+		ret = rpi_shm_create(&in, &mr);
+	}
+
+	/*
+	 * The shmem_open() or rpi_shm_create() should've mapped SHM.
+	 * We just need to do normal clean-up and exit
+	 */
+	if (g_shm_drop)
+		goto out;
+
+	if (ret) {
+		printf("Nooo\n");
 		return ret;
+	}
+
+	if (!g_shm_drop) {
+		wf = fopen("out/data_out", "w");
+		if (!wf) {
+			ret = errno;
+			perror("fopen");
+
+			goto err_out;
+		}
 	}
 
 	/* Write header comment */
@@ -203,13 +248,6 @@ int main(int argc, char *argv[])
 		fprintf(wf, "# timestamp(ns)\tadc_value\tgpio_lev0(hex)\n");
 	else
 		fprintf(wf, "# timestamp(ns)\tadc_value\n");
-
-	/* Create shared memory area */
-	ret = rpi_shm_create(&in, &mr);
-	if (ret) {
-		printf("Nooo\n");
-		return ret;
-	}
 
 	for (ret = 0; ret >= 0 && ret < 2;) {
 		ret = ring_read(mr, &start_data[ret], 2 - ret);
@@ -243,11 +281,11 @@ int main(int argc, char *argv[])
 err_out:
 		printf("FAIL! %d\n", ret);
 	}
-	fclose(wf);
-#ifndef KEEP_SHM_BUF
-	if (in.buff)
+	if (wf)
+		fclose(wf);
+out:
+	if (!g_keep_buffer && in.buff)
 		shmem_destroy(&in);
-#endif
 
 	return ret;
 }
