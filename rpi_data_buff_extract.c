@@ -8,8 +8,9 @@
 
 #include "adc_common.h"
 #include "common.h"
-#include "rpi_shmem.h"
 #include "mvaring.h"
+#include "rpi_helpers.h"
+#include "rpi_shmem.h"
 
 /* TODO: Use real bitmask (12 bits?) */
 #define ADC_BITMASK 0xffff
@@ -125,26 +126,6 @@ static void print_usage(const char *prog_name)
 	printf("  With GPIO (default): timestamp(ns)  adc_value  gpio_state(hex)\n");
 	printf("  Without GPIO:        timestamp(ns)  adc_value\n");
 	printf("\nOutput file: out/data_out\n");
-}
-
-static int rpi_shm_create(struct shmem_info *shi, struct mvaring **mr)
-{
-	int ret;
-
-	ret = shmem_create(SHM_NAME, SHM_SIZE, shi);
-	if (ret) {
-		printf("shmem_create failed. Name %s, size %lu\n", SHM_NAME, (unsigned long)SHM_SIZE);
-
-		return ret;
-	}
-
-	*mr = ring_init(shi->buff, SHM_SIZE);
-	if (!*mr) {
-		printf("Ringbuffer init failed\n");
-		return -EINVAL;
-	}
-
-	return 0;
 }
 
 int main(int argc, char *argv[])
