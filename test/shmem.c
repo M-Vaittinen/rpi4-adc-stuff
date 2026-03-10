@@ -1,5 +1,6 @@
-#include <stdio.h>
+#include <stdbool.h>
 #include <stdlib.h> /* exit */
+#include <stdio.h>
 #include <string.h> /* memcmp */
 #include <unistd.h> /* Fork */
 
@@ -62,7 +63,7 @@ static int mva_open(const char *name, const size_t size)
 {
 	int ret;
 
-	ret = shmem_open(name, size, &g_i);
+	ret = shmem_open(name, size, &g_i, false);
 	MVA_CHECK(ret, -1, "Failed to open shm '%s',size %lu - ret %d\n", name, size, ret);
 	MVA_CHECK(!g_i.buff, -2, "NULL buffer after shmem_open()\n");
 	MVA_CHECK(size != g_i.size, -2, "Unexpected size %lu, expected %lu\n", g_i.size, size);
