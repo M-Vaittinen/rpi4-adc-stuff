@@ -250,9 +250,15 @@ int main(int argc, char *argv[])
 		fprintf(wf, "# timestamp(ns)\tadc_value\n");
 
 	for (ret = 0; ret >= 0 && ret < 2;) {
-		ret = ring_read(mr, &start_data[ret], 2 - ret);
-		if (ret == -EAGAIN)
-			ret = 0;
+		int tmpret;
+
+		tmpret = ring_read(mr, &start_data[ret], 2 - ret);
+		if (tmpret < 0) {
+		       if(tmpret != -EAGAIN)
+				ret = tmpret;
+		} else {
+			ret += tmpret;
+		}
 	}
 
 	if (ret < 0)
