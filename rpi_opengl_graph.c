@@ -55,8 +55,10 @@
 #define TRACE_YMAX      3.5     // Max analog value for each trace
 #define GRID_DIVS       10,8    // Number of divisions in grid
 #define CLEAR_COLOUR    0.8, 0.82, 0.8, 0.0 // Normalised background colour
-#define MAX_VALS        10000   // Maximum number of I/P values
-#define NUM_VALS        1000    // Default number of I/P values
+#define MAX_VALS	(MAX_SAMPS * 9)
+#define NUM_VALS        MAX_SAMPS    // Default number of I/P values
+//#define MAX_VALS        10000   // Maximum number of I/P values
+//#define NUM_VALS        1000    // Default number of I/P values
 #define ZEN(z)          ((z)+0.1)   // Z-value to enable drawing
 #define TIMER_MSEC      1000        // Time for FPS calculation
 #define GLUT_MODE       GLUT_SINGLE // Single or double-buffering
