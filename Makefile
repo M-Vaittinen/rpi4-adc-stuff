@@ -1,13 +1,13 @@
 CFLAGS=-Wall
 DBGFLAGS=-ggdb
-SRC=rpi_adc_stream.c rpi_dma_utils.c rpi_shmem.c mvaring.c
-HDR2=mvaring.h rpi_shmem.h common.h adc_common.h
-SRC2=rpi_data_buff_extract.c rpi_shmem.c mvaring.c
+SRC=rpi_adc_stream.c rpi_dma_utils.c rpi_shmem.c mvaring.c rpi_helpers.c
+HDR2=mvaring.h rpi_shmem.h common.h adc_common.h rpi_helpers.h
+SRC2=rpi_data_buff_extract.c rpi_shmem.c mvaring.c rpi_helpers.c
 OUT=rpi_adc_stream
 OUT2=rpi_adc_bufextract
-HDR=rpi_dma_utils.h mvaring.h rpi_shmem.h common.h adc_common.h
+HDR=rpi_dma_utils.h mvaring.h rpi_shmem.h common.h adc_common.h rpi_helpers.h
 DISPOUT=test-ui
-DISPSRC=rpi_opengl_graph.c
+DISPSRC=rpi_opengl_graph.c rpi_shmem.c mvaring.c rpi_helpers.c
 DISPLDFLAGS=-lm -lglut -lGLEW -lGL
 CC=gcc
 
