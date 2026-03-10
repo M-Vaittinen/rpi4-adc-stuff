@@ -139,7 +139,7 @@
 #define SPI_DMA_PRIORITY ((8<<24)|(1<<16)|(8<<8)|1)
 
 // SPI register strings
-static char *g_spi_regstrs[] = {"CS", "FIFO", "CLK", "DLEN", "LTOH", "DC", ""};
+//static char *g_spi_regstrs[] = {"CS", "FIFO", "CLK", "DLEN", "LTOH", "DC", ""};
 
 // Microsecond timer
 #define USEC_BASE	(PHYS_REG_BASE + 0x3000)
@@ -167,14 +167,14 @@ static uint32_t g_overrun_total;
 static struct shmem_info g_shm_info;
 
 // Disable SPI
-void spi_disable(void)
+static void spi_disable(void)
 {
 	*REG32(spi_regs, SPI_CS) = SPI_FIFO_CLR;
 	*REG32(spi_regs, SPI_CS) = 0;
 }
 
 // Free memory & peripheral mapping and exit
-void terminate(int sig)
+static void terminate(int sig)
 {
 	printf("Closing\n");
 	spi_disable();
@@ -197,7 +197,10 @@ void terminate(int sig)
 	exit(0);
 }
 
-// Catastrophic failure in initial setup
+/*
+ *  Catastrophic failure in initial setup
+ *  TODO: Move to ./rpi_dma_utils.c
+ */
 void fail(const char *format, ...)
 {
 	va_list args;
@@ -206,6 +209,7 @@ void fail(const char *format, ...)
 	va_end(args);
 	terminate(0);
 }
+
 
 // Configure GPIO trigger pins for input
 static void gpio_trigger_init(void)
@@ -222,7 +226,7 @@ static void gpio_trigger_init(void)
 
 // Map GPIO, DMA and SPI registers into virtual mem (user space)
 // If any of these fail, program will be terminated
-void map_devices(void)
+static void map_devices(void)
 {
 	map_periph(&gpio_regs, (void *)GPIO_BASE, PAGE_SIZE);
 	map_periph(&dma_regs, (void *)DMA_BASE, PAGE_SIZE);
@@ -230,13 +234,6 @@ void map_devices(void)
 	map_periph(&clk_regs, (void *)CLK_BASE, PAGE_SIZE);
 	map_periph(&pwm_regs, (void *)PWM_BASE, PAGE_SIZE);
 	map_periph(&usec_regs, (void *)USEC_BASE, PAGE_SIZE);
-}
-
-// Get uncached memory
-void get_uncached_mem(MEM_MAP *mp, int size)
-{
-	if (!map_uncached_mem(mp, size))
-		fail("Error: can't allocate uncached memory\n");
 }
 
 // Definitions for SPI frequency test
@@ -248,18 +245,6 @@ typedef struct {
 	uint32_t txd[TEST_NSAMPS], val;
 	volatile uint32_t usecs[2];
 } TEST_DMA_DATA;
-
-// Wait until DMA is complete
-void dma_wait(int chan)
-{
-	int n = 10000;
-
-	do {
-		usleep(10);
-	} while (dma_transfer_len(chan) && --n);
-	if (n == 0)
-		printf("DMA transfer timeout\n");
-}
 
 typedef struct {
 	DMA_CB cbs[NUM_CBS];
@@ -276,7 +261,7 @@ typedef struct {
 } ADC_DMA_DATA;
 
 // Initialise PWM-paced DMA for ADC sampling
-void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_range)
+static void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_range)
 {
 	ADC_DMA_DATA *dp = mp->virt;
 	ADC_DMA_DATA dma_data = {
@@ -419,27 +404,12 @@ void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_range)
 }
 
 // Start ADC data acquisition
-void adc_stream_start(void)
+static void adc_stream_start(void)
 {
 	start_pwm();
 }
 
-// Wait until a (single) DMA cycle is complete
-void adc_stream_wait(void)
-{
-	dma_wait(DMA_CHAN_B);
-}
-
-// Stop ADC data acquisition
-void adc_stream_stop(void)
-{
-	stop_dma(DMA_CHAN_A);
-	stop_dma(DMA_CHAN_B);
-	stop_dma(DMA_CHAN_C);
-	stop_pwm();
-}
-
-int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvaring *mr)
+static int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvaring *mr)
 {
 	ADC_DMA_DATA *dp=mp->virt;
 	uint32_t /*i,*/ n, usec, slen=0;
@@ -524,7 +494,7 @@ int spi_tx_test(MEM_MAP *mp, uint16_t *buff, int nsamp)
 }
 
 // Initialise SPI0, given desired clock freq; return actual value
-int init_spi(int hz)
+static int init_spi(int hz)
 {
 	int f, div = (SPI_CLOCK_HZ / hz + 1) & ~1;
 
@@ -538,23 +508,6 @@ int init_spi(int hz)
 	*REG32(spi_regs, SPI_CS) = 0x30;
 	*REG32(spi_regs, SPI_CLK) = div;
 	return(f);
-}
-
-// Clear SPI FIFOs
-void spi_clear(void)
-{
-	*REG32(spi_regs, SPI_CS) = SPI_FIFO_CLR;
-}
-
-// Display SPI registers
-void disp_spi(void)
-{
-	volatile uint32_t *p=REG32(spi_regs, SPI_CS);
-	int i=0;
-
-	while (g_spi_regstrs[i][0])
-		printf("%-4s %08X ", g_spi_regstrs[i++], *p++);
-	printf("\n");
 }
 
 // Main program
