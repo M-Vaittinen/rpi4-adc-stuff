@@ -8,8 +8,9 @@
 
 #include "adc_common.h"
 #include "common.h"
-#include "rpi_shmem.h"
 #include "mvaring.h"
+#include "rpi_helpers.h"
+#include "rpi_shmem.h"
 
 /* TODO: Use real bitmask (12 bits?) */
 #define ADC_BITMASK 0xffff
