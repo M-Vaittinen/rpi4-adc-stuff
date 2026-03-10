@@ -27,14 +27,17 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <ctype.h>
-
+#include <sys/mman.h>
 #include <GL/glew.h>
 #include <GL/freeglut.h>
 
-#define VERSION         "0.32"
+#include "adc_common.h"
+#include "rpi_shmem.h"
+#include "mvaring.h"
+
+#define VERSION         "0.33"
 #define USE_ES          1
 
-#define FIFO            "/tmp/adc.fifo"
 //#define WIN_SIZE        640, 480
 #define MAX_CHANS       16      // Max number of I/P chans
 #define NUM_CHANS       1       // Default number of I/P chans
@@ -77,10 +80,12 @@ GLuint program, vbo;
 GLint a_coord3d, u_colours, u_scoffs;
 
 int nvertices, frame_count, win_width, win_height, num_vals=NUM_VALS;
-int use_fifo, fifo_fd, fifo_in, discard, chan_vals;
+int chan_vals;
 int args, verbose, vert_buff_alloc, paused;
 float trace_ymax=TRACE_YMAX;
-char *fifo_name;
+
+// Shared memory ring buffer
+struct mvaring *ring = NULL;
 
 // Structure for a 3D point
 typedef struct {
@@ -99,10 +104,10 @@ typedef struct {
 TRACE traces[MAX_TRACES];
 int num_chans=NUM_CHANS;
 
-// Buffer for FIFO text, and shader compiler messages
+// Buffer for shader compiler messages
 char txtbuff[20000];
-// Buffer for floating-point FIFO values
-float fifo_vals[MAX_VALS];
+// Buffer for ADC sample values
+float sample_vals[MAX_VALS];
 
 // Macros for GLSL strings
 #define VALSTR(s) #s
@@ -155,117 +160,49 @@ char vert_shader[] =
 
 int add_vertex_data(void);
 void update_polyline(TRACE *tp, float *vals, int np);
-int is_fifo(char *fname);
 void do_graph(void);
 
-int main(int argc, char *argv[])
+// Initialize shared memory ring buffer
+int init_shmem(struct shmem_info *in)
 {
-    printf("RPi streaming display v" VERSION "\n");
-    glutInit(&argc, argv);
-    if (!is_fifo(FIFO) || (fifo_fd = open(FIFO, O_RDONLY)) == -1 ||
-            fcntl(fifo_fd, F_SETFL, O_NONBLOCK) == -1)
-        printf("Can't open %s\n", FIFO);
-    else
-    {
-        printf("Reading FIFO %s\n", FIFO);
-        use_fifo = 1;
-    }
-    while (argc > ++args)               // Process command-line args
-    {
-        if (argv[args][0] == '-')
-        {
-            switch (toupper(argv[args][1]))
-            {
-            case 'I':                   // -I: number of input channels
-                if (args>=argc-1 || !isdigit((int)argv[args+1][0]))
-                    fprintf(stderr, "Error: no input chan count\n");
-                else
-                    num_chans = atoi(argv[++args]);
-                break;
-            case 'N':                   // -N: number of values per block
-                if (args>=argc-1 || !isdigit((int)argv[args+1][0]) ||
-                    (num_vals = atoi(argv[++args])) < 1)
-                    fprintf(stderr, "Error: no sample count\n");
-                else if (num_vals > MAX_VALS)
-                {
-                    fprintf(stderr, "Error: maximum sample count %u\n", MAX_VALS);
-                    num_vals = MAX_VALS;
-                }
-                break;
-            case 'S':                   // -S: stream from named pipe (FIFO)
-                if (args>=argc-1 || !argv[args+1][0])
-                    fprintf(stderr, "Error: no FIFO name\n");
-                else
-                    fifo_name = argv[++args];
-                break;
-            case 'V':                   // -V: verbose mode (display hex data)
-                verbose = 1;
-                break;
-            case 'Y':                   // -Y: max y-value for each chan
-                if (args>=argc-1 || !isdigit((int)argv[args+1][0]))
-                    fprintf(stderr, "Error: no max y-value\n");
-                else if (!(trace_ymax = atof(argv[++args])))
-                {
-                    fprintf(stderr, "Error: invalid max y-value\n");
-                    trace_ymax = TRACE_YMAX;
-                }
-                break;
-            default:
-                printf("Error: unrecognised option '%s'\n", argv[args]);
-                exit(1);
-            }
-        }
-    }
-    chan_vals = num_vals / num_chans;
-    do_graph();
+	int ret;
+
+	ret = shmem_open(SHM_NAME, SHM_SIZE, in);
+	if (ret) {
+		printf("Nooo\n");
+		return ret;
+	}
+
+	ring = in->buff;
+
+	while (!ring_is_ok(ring))
+		sleep(0);
+
+	return 0;
 }
 
-// Read in comma or space-delimited floating-point values
-int fifo_read(float *vals, int maxvals)
-{
-    int i, n, nvals=0, done=0;
-    char *s;
+struct adc_data g_chunk;
 
-    while (!done && (n = read(fifo_fd, &txtbuff[fifo_in], sizeof(txtbuff)-fifo_in-1)) > 0)
+// Read ADC samples from ring buffer
+int ring_read_samples(float *vals, int maxvals)
+{
+    int nvals = 0;
+    int chunks_to_read = 1;
+
+    while (nvals < maxvals && ring_read(ring, &g_chunk, chunks_to_read) > 0)
     {
-        txtbuff[fifo_in + n] = 0;
-        if ((s=strchr(&txtbuff[fifo_in], '\n')) != 0)
+        // Read all samples from the chunk
+        for (int i = 0; i < MAX_SAMPS && nvals < maxvals; i++)
         {
-            s = txtbuff;
-            while (!done && (i = strcspn(s, " ,\t\r\n")) > 0 && nvals < maxvals)
-            {
-                if (!discard)
-                    vals[nvals++] = atof(s);
-                s += i;
-                if (*s == '\n')
-                {
-                    if ((i=strlen(s+1)) > 0)
-                    {
-                        strcpy(txtbuff, s+1);
-                        fifo_in = i;
-                    }
-                    else
-                        fifo_in = 0;
-                    done = 1;
-                }
-                else while (*s==',' || *s==' ' || *s=='\t' || *s=='\r')
-                    s++;
-            }
-            discard = 0;
-        }
-        else if ((fifo_in += n) >= sizeof(txtbuff)-2)
-        {
-            discard = 1;
-            fifo_in = nvals = 0;
-        }
-        if (verbose && nvals)
-        {
-            for (i=0; i<nvals; i++)
-                printf("%1.3f ", vals[i]);
-            printf("\n");
+            vals[nvals++] = (float)g_chunk.samples[i] / 4096.0 * 3.3;  // Convert to voltage
+            if (verbose && nvals < 10)
+                printf("%1.3f ", vals[nvals-1]);
         }
     }
-    return(nvals);
+    if (verbose && nvals)
+        printf("\n");
+
+    return nvals;
 }
 
 // Handler for idle events
@@ -273,10 +210,10 @@ void idle_handler(void)
 {
     int n, i;
 
-    if (use_fifo && (n = fifo_read(fifo_vals, MAX_VALS)) > 0 && !paused)
+    if (ring && (n = ring_read_samples(sample_vals, MAX_VALS)) > 0 && !paused)
     {
         for (i=0; i<num_chans; i++)
-            update_polyline(&traces[TRACE1_CHAN+i], fifo_vals+i, n/num_chans);
+            update_polyline(&traces[TRACE1_CHAN+i], sample_vals+i, n/num_chans);
         add_vertex_data();
     }
     glutPostRedisplay();
@@ -593,14 +530,6 @@ void graph_free()
     glDeleteProgram(program);
 }
 
-// Check if fifo exists
-int is_fifo(char *fname)
-{
-    struct stat stat_p;
-    stat(fname, &stat_p);
-    return(S_ISFIFO(stat_p.st_mode));
-}
-
 // Handle keystrokes
 void key_handler(unsigned char key, int x, int y)
 {
@@ -650,5 +579,68 @@ void do_graph(void)
     }
     graph_free();
 }
+
+int main(int argc, char *argv[])
+{
+    struct shmem_info in;
+    int ret;
+
+    printf("RPi streaming display v" VERSION "\n");
+    glutInit(&argc, argv);
+
+    ret = init_shmem(&in);
+    if (ret)
+    {
+        printf("Can't open shared memory ring buffer\n");
+        return ret;
+    }
+    printf("Reading from shared memory ring buffer\n");
+
+    while (argc > ++args)               // Process command-line args
+    {
+        if (argv[args][0] == '-')
+        {
+            switch (toupper(argv[args][1]))
+            {
+            case 'I':                   // -I: number of input channels
+                if (args>=argc-1 || !isdigit((int)argv[args+1][0]))
+                    fprintf(stderr, "Error: no input chan count\n");
+                else
+                    num_chans = atoi(argv[++args]);
+                break;
+            case 'N':                   // -N: number of values per block
+                if (args>=argc-1 || !isdigit((int)argv[args+1][0]) ||
+                    (num_vals = atoi(argv[++args])) < 1)
+                    fprintf(stderr, "Error: no sample count\n");
+                else if (num_vals > MAX_VALS)
+                {
+                    fprintf(stderr, "Error: maximum sample count %u\n", MAX_VALS);
+                    num_vals = MAX_VALS;
+                }
+                break;
+            case 'V':                   // -V: verbose mode (display hex data)
+                verbose = 1;
+                break;
+            case 'Y':                   // -Y: max y-value for each chan
+                if (args>=argc-1 || !isdigit((int)argv[args+1][0]))
+                    fprintf(stderr, "Error: no max y-value\n");
+                else if (!(trace_ymax = atof(argv[++args])))
+                {
+                    fprintf(stderr, "Error: invalid max y-value\n");
+                    trace_ymax = TRACE_YMAX;
+                }
+                break;
+            default:
+                printf("Error: unrecognised option '%s'\n", argv[args]);
+                exit(1);
+            }
+        }
+    }
+    chan_vals = num_vals / num_chans;
+    do_graph();
+
+    shmem_close(&in);
+}
+
 
 // EOF
