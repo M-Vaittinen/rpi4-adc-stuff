@@ -161,14 +161,8 @@ MEM_MAP vc_mem, spi_regs, usec_regs;
 // Data formats for -f option
 #define FMT_USEC	1
 
-// Command-line variables
-static int g_sample_rate = SAMPLE_RATE;
-
-static int g_data_format = FMT_USEC;
-
 static uint32_t g_samp_total;
 static uint32_t g_overrun_total;
-
 
 static struct shmem_info g_shm_info;
 
@@ -470,8 +464,7 @@ int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvarin
 				g_usec_start = usec;
 
 			/* 32bit counter lasts around 71 minutes until wrapping */
-			if (g_data_format == FMT_USEC)
-				g_tmp_data.usecs = usec-g_usec_start;
+			g_tmp_data.usecs = usec-g_usec_start;
 
 			/* When ring is full, stop ADC but keep shared memory alive for consumers */
 			if (ring_add(mr, &g_tmp_data, true)) {
@@ -567,8 +560,7 @@ void disp_spi(void)
 // Main program
 int main(int argc, char *argv[])
 {
-	const uint32_t pwm_range = (PWM_FREQ * 2) / g_sample_rate;
-	int sample_count = MAX_SAMPS;
+	const uint32_t pwm_range = (PWM_FREQ * 2) / SAMPLE_RATE;
 	struct mvaring *mr;
 	int f, ret;
 
@@ -600,12 +592,12 @@ int main(int argc, char *argv[])
 	signal(SIGINT, terminate);
 	f = init_spi(SPI_FREQ);
 
-	printf("Streaming %u samples per block at %u S/s, freq %d\n",
-		   sample_count, g_sample_rate, f);
-	adc_dma_init(&vc_mem, sample_count, 0, pwm_range);
+	printf("Streaming %u samples per block at %llu S/s, freq %d\n",
+	       MAX_SAMPS, SAMPLE_RATE, f);
+	adc_dma_init(&vc_mem, MAX_SAMPS, 0, pwm_range);
 	adc_stream_start();
 	while (1)
-		adc_stream_csv(&vc_mem, g_stream_buff, STREAM_BUFFLEN, sample_count, mr);
+		adc_stream_csv(&vc_mem, g_stream_buff, STREAM_BUFFLEN, MAX_SAMPS, mr);
 
 	terminate(0);
 }
