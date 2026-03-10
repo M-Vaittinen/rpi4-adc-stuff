@@ -162,12 +162,9 @@ MEM_MAP vc_mem, spi_regs, usec_regs;
 #define FMT_USEC	1
 
 // Command-line variables
-static int g_in_chans = 1;
-static int g_sample_count = 0;
 static int g_sample_rate = SAMPLE_RATE;
 
 static int g_data_format = FMT_USEC;
-static int g_testmode;
 
 static uint32_t g_samp_total;
 static uint32_t g_overrun_total;
@@ -270,99 +267,6 @@ void dma_wait(int chan)
 		printf("DMA transfer timeout\n");
 }
 
-// Test SPI frequency
-float test_spi_frequency(MEM_MAP *mp)
-{
-	TEST_DMA_DATA *dp=mp->virt;
-	TEST_DMA_DATA dma_data = {
-		.txd = {0,0,0,0,0,0,0,0,0,0}, .usecs = {0, 0},
-		.cbs = {
-		// Tx output: 2 initial transfers, then 10 timed transfers
-			{SPI_TEST_TI, MEM(mp, dp->txd), REG(spi_regs, SPI_FIFO),		   2*4, 0, CBS(1), 0}, // 0
-			{SPI_TEST_TI, REG(usec_regs, USEC_TIME), MEM(mp, &dp->usecs[0]),	 4, 0, CBS(2), 0}, // 1
-			{SPI_TEST_TI, MEM(mp, dp->txd), REG(spi_regs, SPI_FIFO), TEST_NSAMPS*4, 0, CBS(3), 0}, // 2
-			{SPI_TEST_TI, REG(usec_regs, USEC_TIME), MEM(mp, &dp->usecs[1]),	 4, 0, 0,	  0}, // 3
-		}
-	};
-	memcpy(dp, &dma_data, sizeof(dma_data));				// Copy DMA data into uncached memory
-	*REG32(spi_regs, SPI_DC) = SPI_DMA_PRIORITY;			// Set DMA priorities
-	*REG32(spi_regs, SPI_CS) = SPI_FIFO_CLR;				// Clear SPI FIFOs
-	start_dma(mp, DMA_CHAN_A, &dp->cbs[0], 0);			  // Start SPI Tx DMA
-	*REG32(spi_regs, SPI_DLEN) = (TEST_NSAMPS + 2) * 4;	 // Set data length, and SPI flags
-	*REG32(spi_regs, SPI_CS) = SPI_TFR_ACT | SPI_DMA_EN | SPI_CPHA | SPI_CPOL;
-	dma_wait(DMA_CHAN_A);								   // Wait until complete
-	*REG32(spi_regs, SPI_CS) = SPI_FIFO_CLR;				// Clear accumulated Rx data
-	return(dp->usecs[1] > dp->usecs[0] ?
-		   32.0 * TEST_NSAMPS / (dp->usecs[1] - dp->usecs[0]) : 0);
-}
-
-// Test PWM frequency
-float test_pwm_frequency(MEM_MAP *mp, const uint32_t pwm_range)
-{
-	TEST_DMA_DATA *dp=mp->virt;
-	TEST_DMA_DATA dma_data = {
-		.val = pwm_range,
-		.usecs = {0, 0},
-		.cbs = {
-		// Tx output: 2 initial transfers, then timed transfer
-			{
-				.ti = PWM_TI,
-				.srce_ad = MEM(mp, &dp->val),
-				.dest_ad = REG(pwm_regs, PWM_FIF1),
-				.tfr_len = 4,
-				.stride = 0,
-				.next_cb = CBS(1),
-				.debug = 0
-			}, // 0
-			{
-				.ti = PWM_TI,
-				.srce_ad = MEM(mp, &dp->val),
-				.dest_ad = REG(pwm_regs, PWM_FIF1),
-				.tfr_len = 4,
-				.stride = 0,
-				.next_cb = CBS(2),
-				.debug = 0
-			}, // 1
-			{
-				.ti = PWM_TI,
-				.srce_ad = REG(usec_regs, USEC_TIME),
-				.dest_ad = MEM(mp, &dp->usecs[0]),
-				.tfr_len = 4,
-				.stride = 0,
-				.next_cb = CBS(3),
-				.debug = 0
-			}, // 2
-			{
-				.ti = PWM_TI,
-				.srce_ad = MEM(mp, &dp->val),
-				.dest_ad = REG(pwm_regs, PWM_FIF1),
-				.tfr_len = 4,
-				.stride = 0,
-				.next_cb = CBS(4),
-				.debug = 0
-			}, // 3
-			{
-				.ti = PWM_TI,
-				.srce_ad = REG(usec_regs, USEC_TIME),
-				.dest_ad = MEM(mp, &dp->usecs[1]),
-				.tfr_len = 4,
-				.stride = 0,
-				.next_cb = 0,
-				.debug = 0
-			}, // 4
-		}
-	};
-	memcpy(dp, &dma_data, sizeof(dma_data));				// Copy DMA data into uncached memory
-	*REG32(spi_regs, SPI_DC) = SPI_DMA_PRIORITY;			// Set DMA priorities
-	init_pwm(PWM_FREQ, pwm_range, PWM_VALUE);			   // Initialise PWM
-	*REG32(pwm_regs, PWM_DMAC) = PWM_DMAC_ENAB | PWM_ENAB;  // Enable PWM DMA
-	start_dma(mp, DMA_CHAN_A, &dp->cbs[0], 0);			  // Start DMA
-	start_pwm();											// Start PWM
-	dma_wait(DMA_CHAN_A);								   // Wait until complete
-	stop_pwm();											 // Stop PWM
-	return(dp->usecs[1] > dp->usecs[0] ? 1e6 / (dp->usecs[1] - dp->usecs[0]) : 0);
-}
-
 typedef struct {
 	DMA_CB cbs[NUM_CBS];
 	uint32_t samp_size;
@@ -384,7 +288,7 @@ void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_range)
 	ADC_DMA_DATA dma_data = {
 		.samp_size = 2,
 		.pwm_val = pwm_range,
-		.txd={0xd0, g_in_chans>1 ? 0xf0 : 0xd0},
+		.txd={0xd0, 0xd0}, /* TODO: Use correct MOSI data for BD7910x */
 		.adc_csd = SPI_TFR_ACT | SPI_AUTO_CS | SPI_DMA_EN |
 			   SPI_FIFO_CLR | ADC_CE_NUM | SPI_CPHA | SPI_CPOL,
 		.usecs = {0, 0},
@@ -664,30 +568,11 @@ void disp_spi(void)
 int main(int argc, char *argv[])
 {
 	const uint32_t pwm_range = (PWM_FREQ * 2) / g_sample_rate;
+	int sample_count = MAX_SAMPS;
 	struct mvaring *mr;
-	int args=0;
 	int f, ret;
-	float freq;
-
-	g_sample_count = MAX_SAMPS;
 
 	printf("RPi ADC streamer v" VERSION "\n");
-	while (argc > ++args)               // Process command-line args
-	{
-		if (argv[args][0] == '-')
-		{
-			switch (toupper(argv[args][1]))
-			{
-			case 'T':				   // -T: test mode
-				g_testmode = 1;
-				break;
-			default:
-				printf("Error: unrecognised option '%s'\n", argv[args]);
-				exit(1);
-			}
-		}
-	}
-
 	/*
 	 * Try opening until it succeeds
 	 * TODO: Add a time-out.
@@ -714,26 +599,14 @@ int main(int argc, char *argv[])
 	map_uncached_mem(&vc_mem, VC_MEM_SIZE);
 	signal(SIGINT, terminate);
 	f = init_spi(SPI_FREQ);
-	if (g_testmode)
-	{
-		printf("Testing %1.3f MHz SPI frequency: ", f/1e6);
-		freq = test_spi_frequency(&vc_mem);
-		printf("%7.3f MHz\n", freq);
-		printf("Testing %5u Hz  PWM frequency: ", g_sample_rate);
-		freq = test_pwm_frequency(&vc_mem, pwm_range);
-		printf("%7.3f Hz\n", freq);
 
-		goto end;
-	}
-
-	printf("Streaming %u samples per block at %u S/s\n",
-		   g_sample_count, g_sample_rate);
-	adc_dma_init(&vc_mem, g_sample_count, 0, pwm_range);
+	printf("Streaming %u samples per block at %u S/s, freq %d\n",
+		   sample_count, g_sample_rate, f);
+	adc_dma_init(&vc_mem, sample_count, 0, pwm_range);
 	adc_stream_start();
 	while (1)
-		adc_stream_csv(&vc_mem, g_stream_buff, STREAM_BUFFLEN, g_sample_count, mr);
+		adc_stream_csv(&vc_mem, g_stream_buff, STREAM_BUFFLEN, sample_count, mr);
 
-end:
 	terminate(0);
 }
 
