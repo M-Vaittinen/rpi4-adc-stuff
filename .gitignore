@@ -1,5 +1,8 @@
 out/data_out
 ai-gen-tests/*
+test/ringtest
+test/test
+test/adc-simulate
 rpi_adc_bufextract
 rpi_adc_stream
 test-ui
