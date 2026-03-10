@@ -1,0 +1,357 @@
+# GPIO DMA Capture Implementation Plan
+
+## Overview
+
+Add capability to capture GPIO pin states synchronized with ADC sampling using DMA.
+This allows triggering and timestamping of ADC data based on external GPIO signals.
+
+**Goal:** Capture GPIO state(s) for every ADC sample at up to 1 MHz sample rate.
+
+**Method:** Use DMA to read GPIO level register (GPLEV0) paced by the same SPI RX DREQ
+that triggers ADC data reads. This ensures one GPIO sample per ADC sample, synchronized
+with the PWM trigger.
+
+**Decision:** Use GPLEV0 only (GPIO 0-31) to save memory. GPLEV0 provides access
+to most 40-pin header GPIOs. This reduces ring buffer overhead from 8 to 4 bytes
+per sample. The GPIO reads will use SPI_RX_DREQ pacing to capture one GPIO state
+per ADC sample (not just once per buffer).
+
+**Available GPIOs on 40-pin header (excluding ADC/PWM):**
+- GPIO 16-27: 12 pins (typically free)
+- GPIO 5-6, 7, 12-15: 7 more pins (if not using I2C/UART)
+- Avoid: GPIO 8-11 (SPI0 for ADC), GPIO 18 (PWM trigger)
+
+## References
+
+All page numbers refer to "RP-008248-DS-1-bcm2711-peripherals.pdf" in docs/ folder.
+
+- **GPIO Registers**: Pages 65-72, Section 5.2
+  - GPIO Register Base: 0x7E200000 (bus address)
+  - GPLEV0 (offset 0x34): GPIO pins 0-31 level register (page 70, Table 74)
+  - GPLEV1 (offset 0x38): GPIO pins 32-57 level register (page 70, Table 75)
+  - Both are read-only (RO) registers returning actual pin states
+  - **We will use GPLEV0 only** to reduce memory overhead
+
+- **DMA Control Blocks**: Pages 50-60, Section 4.2
+  - DMA uses control blocks to chain transfers
+  - Current implementation uses 10 CBs (NUM_CBS = 10)
+  - See existing code at lines 365-459 for ping-pong buffer pattern
+
+- **Current DMA Chain**: Lines 365-459 in rpi_adc_stream.c
+  - CB 0: Read USEC_TIME -> usecs[0]
+  - CB 1: Read SPI_FIFO -> rxd1[] (ADC data buffer 1)
+  - CB 2: Read SPI_CS -> states[0] (SPI status)
+  - CB 3: Read USEC_TIME -> usecs[1]
+  - CB 4: Read SPI_FIFO -> rxd2[] (ADC data buffer 2)
+  - CB 5: Read SPI_CS -> states[1] (SPI status)
+  - CB 6: SPI Tx setup
+  - CB 7-9: PWM trigger chain
+
+## Implementation Steps
+
+### Step 0: Define GPIO trigger pins and configuration
+
+**File:** rpi_adc_stream.c or adc_common.h
+
+**Changes:**
+1. Add trigger pin definitions (near top of file with other defines):
+   ```c
+   /* GPIO trigger configuration */
+   #define TRIGGER_PIN_0    16    // Primary trigger on GPIO 16
+   #define TRIGGER_PIN_1    17    // Secondary trigger on GPIO 17 (optional)
+   #define NUM_TRIGGER_PINS 2     // Number of trigger pins to configure
+   
+   /* GPIO trigger polarity - which level is considered "active"
+    * 0 = active low (trigger when pin goes low)
+    * 1 = active high (trigger when pin goes high)
+    */
+   #define TRIGGER_POLARITY_0 1   // GPIO 16: active high
+   #define TRIGGER_POLARITY_1 1   // GPIO 17: active high
+   ```
+
+2. Add GPIO configuration function (before main() or in init):
+   ```c
+   static void gpio_trigger_init(void)
+   {
+       /* Configure trigger pins as inputs with pull-down resistors
+        * Pull-down ensures stable low state when no signal connected
+        */
+       gpio_set(TRIGGER_PIN_0, GPIO_IN, GPIO_PULL_DOWN);
+       gpio_set(TRIGGER_PIN_1, GPIO_IN, GPIO_PULL_DOWN);
+       
+       fprintf(stderr, "GPIO triggers configured:\n");
+       fprintf(stderr, "  GPIO %d: input, pull-down, %s\n", 
+               TRIGGER_PIN_0, TRIGGER_POLARITY_0 ? "active-high" : "active-low");
+       fprintf(stderr, "  GPIO %d: input, pull-down, %s\n",
+               TRIGGER_PIN_1, TRIGGER_POLARITY_1 ? "active-high" : "active-low");
+   }
+   ```
+
+3. Call gpio_trigger_init() in main() after hardware initialization
+
+**Reference:**
+- GPIO_IN, GPIO_PULL_DOWN, GPIO_PULL_UP already defined in rpi_dma_utils.h
+- gpio_set() function available (see rpi_dma_utils.h line 193-195)
+- Pages 66-67: GPIO function select (GPFSEL registers)
+- Pages 72-73: GPIO pull-up/down (GPPUD registers)
+
+### Step 1: Extend data structures for GPIO capture
+
+**File:** rpi_adc_stream.c
+
+**Changes:**
+1. GPIO_LEV0 already defined in rpi_dma_utils.h line 83 (no change needed)
+
+2. Extend ADC_DMA_DATA structure (around line 338-350):
+   - Add `volatile uint32_t gpio_rxd1[MAX_SAMPS]` for GPIO samples (buffer 1)
+   - Add `volatile uint32_t gpio_rxd2[MAX_SAMPS]` for GPIO samples (buffer 2)
+   - **CRITICAL:** GPIO arrays must be same size as ADC rxd1/rxd2 arrays (MAX_SAMPS)
+   - One GPIO read per ADC sample, paced by SPI_RX_DREQ
+   - Keep structure aligned for DMA efficiency
+
+3. Extend struct adc_data in mvaring.h or adc_common.h:
+   - **CHANGE:** Add `uint32_t gpio_lev0[MAX_SAMPS]` array instead of single value
+   - Store GPIO state for each ADC sample (1:1 correspondence)
+   - Document which GPIO pins are safe to use (avoid SPI 8-11, PWM 18)
+   - This increases per-sample storage by MAX_SAMPS * 4 bytes but provides accurate triggering
+
+### Step 2: Increase NUM_CBS to accommodate GPIO reads
+
+**File:** rpi_adc_stream.c, line 69
+
+**Changes:**
+- Current: `#define NUM_CBS 10`
+- Proposed: `#define NUM_CBS 12` (adds 2 CBs for GPLEV0 reads in ping-pong buffers)
+- Update VC_MEM_SIZE calculation if needed (line 66)
+- Memory increase: 2 * MAX_SAMPS * 4 bytes = 8 KB @ MAX_SAMPS=1024
+
+### Step 3: Add GPIO DMA control blocks to the chain
+
+**File:** rpi_adc_stream.c, adc_dma_init() function (lines 365-459)
+
+**Changes:**
+Insert GPLEV0 read CBs into the ping-pong buffer chain **using SPI_RX_DREQ pacing**:
+
+**Buffer 1 chain (after CB 1, before CB 2):**
+- New CB 2: Read GPLEV0 -> gpio_rxd1[] (DMA read GPIO bank 0, paced by SPI RX)
+
+**Buffer 2 chain (after CB 4, before CB 5):**
+- New CB 6: Read GPLEV0 -> gpio_rxd2[] (paced by SPI RX)
+
+**Transfer configuration:**
+```c
+{
+    .ti = SPI_RX_TI,  // CRITICAL: Use SPI_RX_DREQ pacing, same as ADC reads!
+    .srce_ad = REG(gpio_regs, GPIO_LEV0),
+    .dest_ad = MEM(mp, dp->gpio_rxd1),
+    .tfr_len = nsamp * 4,  // Read nsamp GPIO values (4 bytes each)
+    .stride = 0,
+    .next_cb = CBS(next),
+    .debug = 0
+}
+```
+
+**CRITICAL:** Using `SPI_RX_TI` (which includes `DMA_SRCE_DREQ | DMA_SPI_RX_DREQ`)
+ensures GPIO reads are paced by SPI transfers - one GPIO read per SPI sample.
+This gives 1:1 correspondence between ADC samples and GPIO states.
+
+### Step 4: Update CB chain numbering
+
+**File:** rpi_adc_stream.c, adc_dma_init() function
+
+**Changes:**
+Renumber all CBs after insertion points:
+- CB 0: Read USEC_TIME -> usecs[0]
+- CB 1: Read SPI_FIFO -> rxd1[] (ADC samples)
+- **CB 2: Read GPLEV0 -> gpio_rxd1[]** (NEW - GPIO samples, SPI_RX paced)
+- CB 3: Read SPI_CS -> states[0] (was CB 2)
+- CB 4: Read USEC_TIME -> usecs[1]
+- CB 5: Read SPI_FIFO -> rxd2[] (ADC samples)
+- **CB 6: Read GPLEV0 -> gpio_rxd2[]** (NEW - GPIO samples, SPI_RX paced)
+- CB 7: Read SPI_CS -> states[1] (was CB 5)
+- CB 8: SPI Tx setup (was CB 6)
+- CB 9-11: PWM trigger chain (was CB 7-9)
+
+Update all .next_cb references accordingly.
+
+**IMPORTANT:** CB 2 and CB 6 use same SPI_RX_TI as CB 1 and CB 5, ensuring
+GPIO reads happen in lockstep with ADC reads.
+
+### Step 5: Copy GPIO data to ring buffer
+
+**File:** rpi_adc_stream.c, adc_stream_csv() function (lines 459-515)
+
+**Changes:**
+1. Copy GPIO array along with ADC data (around line 479-492):
+   ```c
+   g_tmp_data.usec = dp->usecs[n];
+   memcpy(g_tmp_data.data, n ? dp->rxd2 : dp->rxd1, nsamp * sizeof(uint32_t));
+   memcpy(g_tmp_data.gpio_lev0, n ? dp->gpio_rxd2 : dp->gpio_rxd1, nsamp * sizeof(uint32_t));
+   ```
+
+2. Ensure data is captured before checking for buffer overrun
+
+**Note:** Each adc_data chunk now contains arrays of both ADC and GPIO samples,
+maintaining perfect time alignment.
+
+### Step 6: Update shared memory and ring buffer size
+
+**File:** adc_common.h or mvaring.h
+
+**Changes:**
+1. **SIGNIFICANT INCREASE:** Ring buffer chunk size grows by MAX_SAMPS * 4 bytes
+   - Old: 4 + MAX_SAMPS * 4 = 4100 bytes @ MAX_SAMPS=1024
+   - New: 4 + 2 * MAX_SAMPS * 4 = 8196 bytes @ MAX_SAMPS=1024
+   - This doubles the per-chunk size but provides sample-accurate triggering
+2. May need to reduce NUM_DATA_CHUNKS to keep total SHM_SIZE reasonable
+3. Verify alignment requirements
+4. Increment MVARING_VERSION to reflect structure change
+
+**Memory trade-off:**
+- Accurate triggering: Yes, 1:1 GPIO-to-ADC sample correspondence
+- Cost: 2x ring buffer memory per chunk
+- Alternative: Could reduce MAX_SAMPS if memory constrained
+
+**File:** rpi_adc_bufextract or consumer code
+
+**Changes:**
+1. Update consumer to read and process GPIO fields
+2. Add output format options for GPIO data
+
+### Step 7: Add command-line options for GPIO capture
+
+**File:** rpi_adc_stream.c, main() function (lines 621-680)
+
+**Changes:**
+1. Add `-G` option to enable/disable GPIO capture (default: disabled for backward compatibility)
+2. Add `-P <pins>` option to specify which GPIO pins to monitor (for user reference/documentation)
+3. Store enable flag in global variable: `static int g_gpio_capture = 0;`
+
+### Step 8: Conditional GPIO DMA based on configuration
+
+**File:** rpi_adc_stream.c, adc_dma_init() function
+
+**Changes:**
+1. Make GPIO CB insertion conditional based on `g_gpio_capture` flag
+2. Adjust NUM_CBS dynamically or use two separate initialization paths
+3. Consider using separate CB arrays for GPIO vs non-GPIO modes
+
+Alternative: Always capture GPIO but only copy to ring buffer if enabled.
+This simplifies DMA chain at cost of slight performance overhead.
+
+### Step 9: Add GPIO capture testing mode
+
+**File:** rpi_adc_stream.c, main() function
+
+**Changes:**
+1. Extend test mode (`-T` flag) to verify GPIO DMA reads
+2. Add test that:
+   - Configures a GPIO pin as output
+   - Toggles the pin
+   - Reads via DMA
+   - Verifies captured state matches expected value
+
+### Step 10: Documentation and examples
+
+**Files:** README.md or new docs/GPIO_CAPTURE.md
+
+**Changes:**
+1. Document GPIO capture feature
+2. Provide example use cases:
+   - External trigger detection
+   - Protocol decoding/timestamp correlation
+   - Logic analyzer functionality
+3. Document timing characteristics and limitations
+4. Explain which GPIO pins are safe to use (avoid SPI pins)
+
+### Step 11: Consider performance optimizations
+
+**Optional enhancements:**
+
+1. **Selective GPIO bank reading:**
+   - Only read GPLEV0 if monitoring pins 0-31
+   - Only read GPLEV1 if monitoring pins 32-57
+   - Reduces DMA overhead by 50% if only one bank needed
+
+2. **GPIO pin masking:**
+   - Add software mask to filter relevant pins after DMA read
+   - Reduces storage if only monitoring specific pins
+
+3. **Timestamp only on GPIO events:**
+   - Compare GPIO state to previous state
+   - Only store samples when GPIO changes detected
+   - Requires more complex logic but reduces data volume
+
+4. **Multiple GPIO sampling per ADC sample:**
+   - If ADC samples slower than GPIO needs
+   - Oversampling GPIO can catch brief glitches
+   - Requires additional DMA CBs and buffer space
+
+## Testing Checklist
+
+- [ ] Verify GPIO DMA reads don't interfere with ADC timing
+- [ ] Test at maximum sample rate (1 MHz)
+- [ ] Verify GPIO data alignment with ADC samples
+- [ ] Test buffer overrun behavior with GPIO enabled
+- [ ] Measure CPU overhead difference with GPIO capture on/off
+- [ ] Test with pins configured as inputs with pull-up/pull-down
+- [ ] Verify no conflicts with SPI pins (8-11)
+- [ ] Test on actual Raspberry Pi 4 hardware
+
+## Potential Issues and Considerations
+
+1. **DMA Bandwidth:**
+   - Adding MAX_SAMPS GPIO reads per buffer = 4 KB per buffer @ MAX_SAMPS=1024
+   - At 1 MHz: 1000 buffers/sec * 4 KB = 4 MB/s for GPIO
+   - Current ADC: ~4 MB/s, total becomes ~8 MB/s
+   - Should be within DMA capabilities
+
+2. **Memory Size:**
+   - Ring buffer doubles in size (adds MAX_SAMPS * 4 bytes per chunk)
+   - May need to reduce NUM_DATA_CHUNKS from 0x2000 to 0x1000
+   - Or reduce MAX_SAMPS if memory is constrained
+   - Trade-off: Memory vs. triggering accuracy
+
+3. **SPI_RX_DREQ Pacing:**
+   - Critical assumption: GPIO register reads can be paced by SPI_RX_DREQ
+   - The DREQ signal gates the DMA transfer, ensuring synchronization
+   - GPIO reads will happen at same rate as SPI FIFO reads
+   - Should work as GPIO is just a memory-mapped register read
+
+3. **Timing Precision:**
+   - GPIO read happens in DMA chain after ADC read
+   - Small delay between ADC sample and GPIO capture (~few clock cycles)
+   - Document this timing relationship
+
+4. **Pin State Synchronization:**
+   - GPIO reads are asynchronous to PWM/SPI trigger
+   - May capture mid-transition if GPIO changes during DMA chain
+   - Consider if synchronous sampling is needed (more complex)
+
+5. **Backward Compatibility:**
+   - Make GPIO capture optional to maintain compatibility
+   - Consider versioning the ring buffer format
+   - Update mvaring.h MVARING_VERSION if struct changes
+
+## Alternative Approaches
+
+### Alternative 1: Use separate DMA channel for GPIO
+- Pros: Parallel GPIO reads, less impact on ADC chain
+- Cons: More complex synchronization, uses another DMA channel
+
+### Alternative 2: Read GPIO in software after DMA
+- Pros: Simpler, no DMA chain changes
+- Cons: Less precise timing, CPU overhead, may miss fast transitions
+
+### Alternative 3: Use GPIO event detection
+- Pros: Efficient for sparse events
+- Cons: Only captures edges, not level at ADC sample time
+- See GPEDS0/1 registers (offset 0x40/0x44, page 71)
+
+## Recommended Implementation Order
+
+1. Start with Step 1-5 (basic GPIO DMA capture)
+2. Test thoroughly before adding options (Steps 6-7)
+3. Add conditional capture (Step 8) for backward compatibility
+4. Add testing and documentation (Steps 9-10)
+5. Consider optimizations (Step 11) only if needed

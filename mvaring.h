@@ -12,12 +12,13 @@ extern "C" {
 
 #include "common.h"
 
-#define MVARING_VERSION 2
+#define MVARING_VERSION 3
 #define MAX_RETRY_ATTEMPTS 1000
 
 struct adc_data {
 	uint32_t usecs;
 	uint32_t samples[MAX_SAMPS];
+	uint32_t gpio_lev0[MAX_SAMPS];  /* GPIO 0-31 state per sample */
 };
 
 struct mvaring {
