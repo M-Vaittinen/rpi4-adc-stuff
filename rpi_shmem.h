@@ -1,6 +1,7 @@
 #ifndef _MVA_RPI_SHMEM
 #define _MVA_RPI_SHMEM
 
+#include <stdbool.h>
 #include <stddef.h>
 
 struct shmem_info {
