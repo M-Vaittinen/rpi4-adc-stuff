@@ -32,8 +32,9 @@
 #include <GL/freeglut.h>
 
 #include "adc_common.h"
-#include "rpi_shmem.h"
 #include "mvaring.h"
+#include "rpi_helpers.h"
+#include "rpi_shmem.h"
 
 #define VERSION         "0.33"
 #define USE_ES          1
@@ -188,13 +189,23 @@ int init_shmem(struct shmem_info *in)
 {
 	int ret;
 
-	ret = shmem_open(SHM_NAME, SHM_SIZE, in);
+/*	if (g_use_old_buff) {
+		ret = shmem_open(SHM_NAME, SHM_SIZE, &in, false);
+		mr = in.buff;
+	} else {
+	*/
+	ret = rpi_shm_create(in, &ring);
+		/*
+	}
+
+	ret = shmem_open(SHM_NAME, SHM_SIZE, in, true);
+	*/
 	if (ret) {
 		printf("Nooo\n");
 		return ret;
 	}
 
-	ring = in->buff;
+//	ring = in->buff;
 
 	while (!ring_is_ok(ring))
 		sleep(0);
