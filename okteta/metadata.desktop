@@ -1,0 +1,16 @@
+[Desktop Entry]
+Encoding=UTF-8
+Icon=application-x-executable
+Type=Service
+ServiceTypes=KPluginInfo
+
+Name=MVa-ring Structure
+Comment=Structure of the mvaring ring-buffer
+
+X-KDE-PluginInfo-Author=Matti Vaittinen
+X-KDE-PluginInfo-Email=mazziesaccount@gmail.com
+X-KDE-PluginInfo-Name=mvaring
+X-KDE-PluginInfo-Version=0.1
+X-KDE-PluginInfo-Category=structure/js
+X-KDE-PluginInfo-License=MIT
+X-KDE-PluginInfo-EnabledByDefault=false
