@@ -16,19 +16,21 @@
 //
 // v0.20 JPB 16/11/20 Tidied up for first Github release
 
-#include <stdint.h>
-#include <stdlib.h>
-#include <stdarg.h>
-#include <unistd.h>
-#include <stdio.h>
-#include <signal.h>
-#include <string.h>
 #include <ctype.h>
-#include <sys/stat.h>
 #include <errno.h>
+#include <getopt.h>
+#include <signal.h>
+#include <stdarg.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "adc_common.h"
 #include "common.h"
+#include "rpi_helpers.h"
 #include "mvaring.h"
 #include "rpi_dma_utils.h"
 #include "rpi_shmem.h"
@@ -510,20 +512,28 @@ static int init_spi(int hz)
 	return(f);
 }
 
-// Main program
-int main(int argc, char *argv[])
+static void print_usage(const char *prog_name)
 {
-	const uint32_t pwm_range = (PWM_FREQ * 2) / SAMPLE_RATE;
-	struct mvaring *mr;
-	int f, ret;
+	printf("Usage: %s [options]\n", prog_name);
+	printf("Start reading ADC data\n\n");
+	printf("Options:\n");
+	printf("  -c  --create-shm       Create the shared-memory buffer and start reading\n");
+	printf("  -h, --help             Show this help message\n\n");
+	printf("Output data to 'mvaring' type ring buffer in shared memory\n");
+	printf("Raw shared memery is in '/dev/shm%s'\n", SHM_NAME);
+	printf("See the data-format from mvaring.h\n");
+}
 
-	printf("RPi ADC streamer v" VERSION "\n");
+int shm_try_open(struct shmem_info *shi, struct mvaring **mr)
+{
+	int ret;
+
 	/*
 	 * Try opening until it succeeds
 	 * TODO: Add a time-out.
 	 */
 	do {
-		ret = shmem_open(SHM_NAME, SHM_SIZE, &g_shm_info, true);
+		ret = shmem_open(SHM_NAME, SHM_SIZE, shi, true);
 		if (ret) {
 			if (ret != -ENOENT) {
 				printf("Nooo\n");
@@ -534,10 +544,53 @@ int main(int argc, char *argv[])
 		}
 	} while (ret);
 
-	mr = g_shm_info.buff;
+	*mr = shi->buff;
 
-	while (!ring_is_ok(mr))
+	while (!ring_is_ok(*mr))
 		sleep(0);
+
+	return 0;
+}
+
+// Main program
+int main(int argc, char *argv[])
+{
+	const uint32_t pwm_range = (PWM_FREQ * 2) / SAMPLE_RATE;
+	static struct option long_options[] = {
+		{"create-shm",	no_argument,		NULL, 'c'},
+		{"help",	no_argument,		NULL, 'h'},
+		{NULL,           0,                 NULL, 0}
+	};
+	struct mvaring *mr;
+	int f, ret, opt;
+	bool create_shm = false;
+
+
+	printf("RPi ADC streamer v" VERSION "\n");
+
+
+	/* Parse command line arguments */
+	while ((opt = getopt_long(argc, argv, "ch", long_options, NULL)) != -1) {
+		switch (opt) {
+		case 'c':
+			create_shm = true;
+			break;
+		case 'h':
+			print_usage(argv[0]);
+			return 0;
+		default:
+			fprintf(stderr, "Use -h for help\n");
+			return 1;
+		}
+	}
+
+	if (create_shm)
+		ret = rpi_shm_create(&g_shm_info, &mr);
+	else
+		ret = shm_try_open(&g_shm_info, &mr);
+
+	if (ret)
+		return ret;
 
 	map_devices();
 	gpio_trigger_init();
