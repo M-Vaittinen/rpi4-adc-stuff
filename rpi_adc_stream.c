@@ -19,6 +19,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <getopt.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -411,10 +412,21 @@ static void adc_stream_start(void)
 	start_pwm();
 }
 
+#define NUMDBG 0xff
+uint32_t g_dbg_first[NUMDBG];
+uint32_t g_dbg_last[NUMDBG];
+
+uint32_t swap32(uint32_t orig)
+{
+  return ((orig & 0xFF000000) >> 24) | ((orig & 0x00FF0000) >> 8) |
+         ((orig & 0x0000FF00) << 8) | ((orig & 0x000000FF) << 24);
+}
+
 static int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct mvaring *mr)
 {
 	ADC_DMA_DATA *dp=mp->virt;
 	uint32_t /*i,*/ n, usec, slen=0;
+	static int numdbg = 0;
 
 	for (n=0; n<2 && slen==0; n++)
 	{
@@ -423,6 +435,14 @@ static int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct
 			g_samp_total += nsamp;
 			/* Copy ADC and GPIO data to adc_data struct */
 			memcpy(g_rx_buff, n ? (void *)dp->rxd2 : (void *)dp->rxd1, nsamp*4);
+			if (numdbg < NUMDBG) {
+
+				g_dbg_first[numdbg] = g_rx_buff[0];
+				g_dbg_last[numdbg] = g_rx_buff[ARRAY_SIZE(g_tmp_data.samples) - 1];
+
+				numdbg ++;
+			}
+
 			memcpy(g_tmp_data.gpio_lev0, n ? (void *)dp->gpio_rxd2 : (void *)dp->gpio_rxd1, nsamp*4);
 			usec = dp->usecs[n];
 			if (dp->states[n^1])
@@ -440,11 +460,23 @@ static int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct
 
 			/* When ring is full, stop ADC but keep shared memory alive for consumers */
 			if (ring_add(mr, &g_tmp_data, true)) {
+				char cmd[32];
+				int i;
+
+				for (i = 1; i < numdbg; i++) {
+					uint32_t first, last;
+
+					first = swap32(g_dbg_first[i]) >> 16;
+					last = swap32(g_dbg_last[i - 1]) >> 16;
+
+					printf("[l%u f%u]: 0x%x 0x%x (diff %u)\n", i - 1, i, last, first, first -  last);
+				}
+
+				printf("\noverrun: %u\n", g_overrun_total);
 				printf("\nRing buffer full, stopping ADC capture\n");
 				printf("Shared memory preserved for consumers to drain buffer.\n");
 				printf("Type 'quit' or 'q' and press Enter to exit: ");
 				
-				char cmd[32];
 				while (fgets(cmd, sizeof(cmd), stdin)) {
 					if (strncmp(cmd, "quit", 4) == 0 || cmd[0] == 'q') {
 						printf("Exiting...\n");
@@ -552,25 +584,43 @@ int shm_try_open(struct shmem_info *shi, struct mvaring **mr)
 	return 0;
 }
 
+#define ADC_SCHED_PRIO 10
+
+int set_sched()
+{
+	struct sched_param param;
+	int policy = SCHED_FIFO;
+	int ret;
+
+	param.sched_priority = ADC_SCHED_PRIO;
+	if (sched_setscheduler(0, policy, &param) == -1) {
+		ret = errno;
+		printf("sched_setscheduler failed: %s\n", strerror(errno));
+
+		return ret;
+	}
+
+	return 0;
+}
+
 // Main program
 int main(int argc, char *argv[])
 {
 	const uint32_t pwm_range = (PWM_FREQ * 2) / SAMPLE_RATE;
 	static struct option long_options[] = {
-		{"create-shm",	no_argument,		NULL, 'c'},
-		{"help",	no_argument,		NULL, 'h'},
-		{NULL,           0,                 NULL, 0}
+		{"realtime-sched",	no_argument,		NULL, 'r'},
+		{"create-shm",		no_argument,		NULL, 'c'},
+		{"help",		no_argument,		NULL, 'h'},
+		{NULL,			0,			NULL, 0}
 	};
 	struct mvaring *mr;
 	int f, ret, opt;
-	bool create_shm = false;
-
+	bool create_shm = false, sched_fifo = false;
 
 	printf("RPi ADC streamer v" VERSION "\n");
 
-
 	/* Parse command line arguments */
-	while ((opt = getopt_long(argc, argv, "ch", long_options, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "chr", long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'c':
 			create_shm = true;
@@ -578,6 +628,9 @@ int main(int argc, char *argv[])
 		case 'h':
 			print_usage(argv[0]);
 			return 0;
+		case 'r':
+			sched_fifo = true;
+			break;
 		default:
 			fprintf(stderr, "Use -h for help\n");
 			return 1;
@@ -588,6 +641,12 @@ int main(int argc, char *argv[])
 		ret = rpi_shm_create(&g_shm_info, &mr);
 	else
 		ret = shm_try_open(&g_shm_info, &mr);
+
+	if (ret)
+		return ret;
+
+	if (sched_fifo)
+		ret = set_sched();
 
 	if (ret)
 		return ret;
