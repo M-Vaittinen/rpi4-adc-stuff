@@ -53,6 +53,7 @@
 		#error "Either HI_SPEED or LO_SPEED is required"
 	#endif
 	#define SAMPLE_RATE	 MEGA(1)
+//	#define SAMPLE_RATE	 KILO(500)
 	#define SPI_FREQ	MEGA(20)
 #endif
 
@@ -184,6 +185,7 @@ static void terminate(int sig)
 	stop_dma(DMA_CHAN_A);
 	stop_dma(DMA_CHAN_B);
 	stop_dma(DMA_CHAN_C);
+	stop_dma(DMA_CHAN_D);
 	unmap_periph_mem(&vc_mem);
 	unmap_periph_mem(&usec_regs);
 	unmap_periph_mem(&pwm_regs);
@@ -296,7 +298,7 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_
 				.dest_ad = MEM(mp, dp->rxd1),
 				.tfr_len = nsamp*4,
 				.stride = 0,
-				.next_cb = CBS(2),
+				.next_cb = CBS(3),
 				.debug = 0
 			}, // 1
 			{
@@ -305,7 +307,7 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_
 				.dest_ad = MEM(mp, dp->gpio_rxd1),
 				.tfr_len = nsamp*4,
 				.stride = 0,
-				.next_cb = CBS(3),
+				.next_cb = CBS(6),
 				.debug = 0
 			}, // 2 - GPIO capture for buffer 1 (paced by SPI RX)
 			{
@@ -332,7 +334,7 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_
 				.dest_ad = MEM(mp, dp->rxd2),
 				.tfr_len = nsamp*4,
 				.stride = 0,
-				.next_cb = CBS(6),
+				.next_cb = CBS(7),
 				.debug = 0
 			}, // 5
 			{
@@ -341,7 +343,7 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_
 				.dest_ad = MEM(mp, dp->gpio_rxd2),
 				.tfr_len = nsamp*4,
 				.stride = 0,
-				.next_cb = CBS(7),
+				.next_cb = CBS(2),
 				.debug = 0
 			}, // 6 - GPIO capture for buffer 2 (paced by SPI RX)
 			{
@@ -403,6 +405,7 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_
 	*REG32(spi_regs, SPI_CS) = SPI_FIFO_CLR;					// Clear SPI FIFOs
 	start_dma(mp, DMA_CHAN_C, &dp->cbs[8], 0);  // Start SPI Tx DMA
 	start_dma(mp, DMA_CHAN_B, &dp->cbs[0], 0);  // Start SPI Rx DMA
+	start_dma(mp, DMA_CHAN_D, &dp->cbs[2], 0);   // Start trigger GPIO polling
 	start_dma(mp, DMA_CHAN_A, &dp->cbs[9], 0);  // Start PWM DMA, for SPI trigger
 }
 
