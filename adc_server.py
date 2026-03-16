@@ -14,15 +14,115 @@
 #
 # v0.01 JPB 11/1/21  First release
 
-import os, os.path, random, string, math, cherrypy
+import os, os.path, random, string, math, socket, threading, time, cherrypy
 
 portnum   = 8080
 fifo_name = "/tmp/adc.fifo"
+adc_stream_host = os.environ.get("ADC_STREAM_HOST", "127.0.0.1")
+adc_stream_port = int(os.environ.get("ADC_STREAM_PORT", "9000"))
+adc_stream_timeout = float(os.environ.get("ADC_STREAM_TIMEOUT", "0.25"))
 ymax = 2.0
 npoints = 10000
 nchans = 2
 nresults = 0
 directory = os.getcwd()
+
+
+class AdcSocketClient(object):
+    """Line-based TCP reader with auto-reconnect for ADC samples."""
+
+    def __init__(self, host, port, timeout):
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self.sock = None
+        self.reader = None
+        self.lock = threading.Lock()
+        self.last_error = ""
+        self.last_connect_ts = 0.0
+        self.latest_line = ""
+        self.lines_read = 0
+        self.reconnect_delay = 0.5
+        self.stop_evt = threading.Event()
+        self.worker = None
+
+    def _close(self):
+        if self.reader:
+            try:
+                self.reader.close()
+            except Exception:
+                pass
+            self.reader = None
+        if self.sock:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+            self.sock = None
+
+    def start(self):
+        if self.worker and self.worker.is_alive():
+            return
+        self.stop_evt.clear()
+        self.worker = threading.Thread(target=self._reader_loop, name="adc-socket-reader", daemon=True)
+        self.worker.start()
+
+    def stop(self):
+        self.stop_evt.set()
+        self._close()
+
+    def _connect(self):
+        self._close()
+        cherrypy.log("ADC socket: connecting to %s:%d" % (self.host, self.port))
+        self.sock = socket.create_connection((self.host, self.port), self.timeout)
+        self.sock.settimeout(self.timeout)
+        self.reader = self.sock.makefile("r", encoding="ascii", newline="\n")
+        self.last_connect_ts = time.time()
+        self.last_error = ""
+        cherrypy.log("ADC socket: connected")
+
+    def _reader_loop(self):
+        while not self.stop_evt.is_set():
+            try:
+                if self.reader is None:
+                    self._connect()
+
+                line = self.reader.readline()
+                if not line:
+                    self.last_error = "stream closed by peer"
+                    cherrypy.log("ADC socket: stream closed by peer")
+                    self._close()
+                    self.stop_evt.wait(self.reconnect_delay)
+                    continue
+
+                line = line.strip()
+                with self.lock:
+                    self.latest_line = line
+                    self.lines_read += 1
+
+            except (OSError, ValueError) as ex:
+                self.last_error = str(ex)
+                cherrypy.log("ADC socket: read/connect failed: %s" % self.last_error)
+                self._close()
+                self.stop_evt.wait(self.reconnect_delay)
+
+    def read_line(self):
+        with self.lock:
+            return self.latest_line
+
+    def status(self):
+        with self.lock:
+            return {
+                "host": self.host,
+                "port": self.port,
+                "connected": self.reader is not None,
+                "last_error": self.last_error,
+                "last_connect_ts": self.last_connect_ts,
+                "lines_read": self.lines_read,
+            }
+
+
+adc_socket_client = AdcSocketClient(adc_stream_host, adc_stream_port, adc_stream_timeout)
 
 # Oscilloscope-type ADC data display
 class Grapher(object):
@@ -51,15 +151,47 @@ class Grapher(object):
     @cherrypy.expose
     def fifo(self):
         cherrypy.response.headers['Content-Type'] = 'text/plain'
-        try:
-            f = open(fifo_name, "r")
-            rsp = f.readline()
-            f.close()
-        except:
-            rsp = "No data"
+        rsp = adc_socket_client.read_line()
+        if rsp is None:
+            rsp = ""
         return rsp
 
+    # Socket data source (same output format as /fifo)
+    @cherrypy.expose
+    def socket(self):
+        cherrypy.response.headers['Content-Type'] = 'text/plain'
+        rsp = adc_socket_client.read_line()
+        if rsp is None:
+            rsp = ""
+        return rsp
+
+    # ADC socket source (alias used by clients)
+    @cherrypy.expose
+    def adc(self):
+        cherrypy.response.headers['Content-Type'] = 'text/plain'
+        rsp = adc_socket_client.read_line()
+        if rsp is None:
+            rsp = ""
+        return rsp
+
+    @cherrypy.expose
+    def health(self):
+        st = adc_socket_client.status()
+        cherrypy.response.headers['Content-Type'] = 'text/plain'
+        return (
+            "adc_host={host}\n"
+            "adc_port={port}\n"
+            "adc_connected={connected}\n"
+            "adc_last_error={last_error}\n"
+            "adc_last_connect_ts={last_connect_ts}\n"
+            "adc_lines_read={lines_read}\n"
+        ).format(**st)
+
 if __name__ == '__main__':
+    print("ADC server configured stream target %s:%d timeout=%.3fs" %
+          (adc_stream_host, adc_stream_port, adc_stream_timeout))
+    adc_socket_client.start()
+    cherrypy.engine.subscribe('stop', adc_socket_client.stop)
     cherrypy.config.update({"server.socket_port": portnum, "server.socket_host": "0.0.0.0"})
     conf = {
         '/': {

@@ -42,9 +42,10 @@
       <pre id="status" style="font-size: 14px; margin: 8px"></pre>
       <script>
         "use strict";
-        var version = "webgl_logic v0.24"
+        var version = "webgl_logic v0.25"
         window.onload = start_graph;
         const XMIN=-1.0, XMAX=1.0, YMIN=-1.0, YMAX=1.0, NSAMP=20000;
+        const DATA_SRCE = "adc";
         const XMARGIN=60, YMARGIN=90, MIN_CHANS=1, MAX_CHANS=16, NCHANS=16;
         const LABEL_SIZE = [XMARGIN-3, 14];
         const ZOOM_VALS = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000];
@@ -104,6 +105,7 @@
             draw_test_graph();
             redraw_graph();
             resize_canvas();
+            get_data(DATA_SRCE);
         }
 
         // Initialise graph
@@ -187,7 +189,21 @@
             })
             .then(data => {
                 var vals = csv_decode(data);
-                disp_status(data ? vals.length+" samples" : "No data");
+                if (!vals.length) {
+                    disp_status("No data");
+                    return;
+                }
+
+                trace_data = vals;
+                nsamp = trace_data.length;
+                if (disp_nsamp > nsamp)
+                    disp_nsamp = nsamp;
+                if (disp_oset + disp_nsamp > nsamp)
+                    disp_oset = Math.max(0, nsamp - disp_nsamp);
+
+                update_data();
+                redraw_graph();
+                disp_status(vals.length+" samples");
             })
             .catch(error => {
                 disp_status("Can't load data");
@@ -196,18 +212,17 @@
 
          // Animate the display
         function animate() {
-            test_num += test_inc;
-            draw_test_graph();
-            redraw_graph();
-            if (running)
+            get_data(DATA_SRCE);
+            if (running) {
                 window.requestAnimationFrame(animate);
+            }
         }
 
         // Handle 'single' button press
         function run_single(btn) {
             if (running)
                 run_stop(elem('run_stop_btn'));
-            animate();
+            get_data(DATA_SRCE);
         }
 
         // Handle 'run/stop' button press
@@ -315,6 +330,15 @@
         // Flatten an array
         function flatten(a) {
             return a.reduce((acc, val) => acc.concat(val), []);
+        }
+
+        // Decode CSV integer list into finite numeric samples.
+        function csv_decode(s) {
+            return (s || "")
+                .trim()
+                .split(',')
+                .map(x => Number.parseFloat(x))
+                .filter(Number.isFinite);
         }
 
         // Return a document element, given ID
