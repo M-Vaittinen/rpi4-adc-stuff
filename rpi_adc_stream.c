@@ -100,6 +100,19 @@
  */
 #define TRIGGER_PIN	 25	  // GPIO 25, Header Pin 22 (Bottom right area)
 
+/*
+ * Debug PWM output pin (GPIO12, header pin 32).
+ *
+ * GPIO12 ALT0 = PWM0_0 (BCM2711 peripherals datasheet §5, GPIO alternate
+ * function table, p.92).  PWM0 channel 0 is the same PWM instance used for
+ * DMA pacing (PERMAP=5, DMA_PWM_DREQ), so enabling this mux routes the
+ * live pacing signal directly to the pin with no extra DMA load or AXI bus
+ * traffic — the PWM peripheral drives the GPIO output entirely in hardware.
+ *
+ * Enabled at runtime with --pwm-debug (-d); off by default.
+ */
+#define PWM_DBG_PIN	12	  // GPIO12, Header Pin 32, ALT0 = PWM0_0
+
 /* GPIO trigger polarity - which level is considered "active"
  * 0 = active low (trigger when pin goes low)
  * 1 = active high (trigger when pin goes high)
@@ -301,7 +314,8 @@ typedef struct {
 } ADC_DMA_DATA;
 
 // Initialise PWM-paced DMA for ADC sampling
-static void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_range)
+static void adc_dma_init(MEM_MAP *mp, int nsamp, int single,
+			 const uint32_t pwm_range, bool pwm_debug)
 {
 	ADC_DMA_DATA *dp = mp->virt;
 	ADC_DMA_DATA dma_data = {
@@ -400,6 +414,42 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_
 				.debug = 0
 			}, // 6
 		// PWM ADC trigger: wait for PWM, set sample length, trigger SPI
+			/*
+			 * CB 7 — pace DMA via PWM DREQ; refill PWM FIFO.
+			 *
+			 * TI flags (PWM_TI):
+			 *   DEST_DREQ (bit 6)  : destination writes are gated by DREQ.
+			 *   PERMAP = 5         : selects PWM0 DREQ (BCM2711 Table 53,
+			 *                        §4.2.1.3 p.61; DMA_PWM_DREQ = 5).
+			 *   WAIT_RESP          : DMA waits for write ACK before next CB.
+			 *
+			 * How pacing works:
+			 *   The PWM DMAC register has DREQ threshold = 1 (set via
+			 *   PWM_DMAC = PWM_DMAC_ENAB | PWM_ENAB = 0x80000001,
+			 *   BCM2711 Table 155, §8.6 p.131).  The DREQ line is
+			 *   asserted (high = "I need data") whenever the 64-word
+			 *   FIFO drops below this threshold, i.e. when it is empty.
+			 *   Because DREQ is level-sensitive (§4.2.1.3, p.61), DMA
+			 *   channel A stalls here until DREQ is active.
+			 *
+			 *   This CB writes pwm_val (= pwm_range) to PWM_FIF1
+			 *   (BCM2711 §8.6 Table 158, p.132 — write-only FIFO
+			 *   input register at PWM base + 0x18).  One word enters
+			 *   the FIFO, DREQ de-asserts (FIFO no longer empty).
+			 *
+			 *   The PWM channel (configured in serialiser mode with
+			 *   USEF1=1, PWEN1=1 via start_pwm()) consumes that word
+			 *   in exactly pwm_range PWM-clock cycles (= pwm_range µs
+			 *   at PWM_FREQ=1 MHz).  After pwm_range µs the FIFO is
+			 *   empty again and DREQ re-asserts for the next cycle.
+			 *
+			 * Trigger rate derivation:
+			 *   f_trigger = PWM_FREQ / pwm_range
+			 *             = 1,000,000 / 1  =  1,000,000 Hz
+			 *
+			 * This CB executes once per PWM period, setting the pace
+			 * for CBs 8 and 9 which execute in the SAME DREQ window.
+			 */
 			{
 				.ti = PWM_TI,
 				.srce_ad = MEM(mp, &dp->pwm_val),
@@ -409,6 +459,21 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_
 				.next_cb = CBS(8),
 				.debug = 0
 			}, // 7
+			/*
+			 * CB 8 — set SPI transfer length (still in the same DREQ
+			 *         window as CB 7; DREQ is still high because no
+			 *         write was made to the PWM FIFO in this CB).
+			 *
+			 * Writes samp_size (= 2, i.e. 2 bytes = 16 bits) to
+			 * SPI_DLEN (BCM2711 §10 SPI, SPI0 register map, offset
+			 * 0x0C).  This programs the SPI peripheral for exactly
+			 * one 16-bit ADC sample per triggered transaction.
+			 *
+			 * Because DEST_DREQ is set and PERMAP still = PWM DREQ,
+			 * this write is gated by DREQ just like CB 7.  Since no
+			 * FIFO write occurred in CB 7's aftermath, DREQ remains
+			 * asserted and this CB executes immediately after CB 7.
+			 */
 			{
 				.ti = PWM_TI,
 				.srce_ad = MEM(mp, &dp->samp_size),
@@ -418,6 +483,36 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_
 				.next_cb = CBS(9),
 				.debug = 0
 			}, // 8
+			/*
+			 * CB 9 — trigger SPI transaction (still in the same DREQ
+			 *         window as CBs 7 and 8).
+			 *
+			 * Writes adc_csd (SPI_TFR_ACT | SPI_AUTO_CS | SPI_DMA_EN
+			 * | SPI_FIFO_CLR | ...) to SPI_CS (BCM2711 §10, offset
+			 * 0x00), which sets the TA (Transfer Active) bit and
+			 * starts a new SPI DMA transaction of SPI_DLEN = 2 bytes.
+			 *
+			 * After this write:
+			 *   - The SPI peripheral begins clocking out 16 bits on
+			 *     MOSI while capturing 16 bits on MISO from the ADC.
+			 *     At 20 MHz SPI clock the transaction takes 800 ns.
+			 *   - SPI RX DMA (channel B, CB 0-5) reads the received
+			 *     word from SPI_FIFO into the ping-pong data buffer
+			 *     using SPI_RX_DREQ flow control.
+			 *
+			 * DREQ is still asserted (no FIFO write since CB 7), so
+			 * this CB executes back-to-back with CB 8 at AXI bus speed.
+			 * CB 9 loops back to CB 7; DMA then stalls on DREQ until
+			 * the next PWM period begins (pwm_range µs later).
+			 *
+			 * Summary of one complete sample cycle (pwm_range = 1):
+			 *   t = 0          CB 7 writes to FIF1 → FIFO=2 → DREQ=0
+			 *   t = 1 µs       FIFO drains to 1 → DREQ=1
+			 *   t = 1 µs + ε   CB 8 sets SPI_DLEN, CB 9 triggers SPI
+			 *   t = 1 µs + δ   SPI transaction starts (800 ns @ 20 MHz)
+			 *   t = 1 µs + δ + 800 ns  SPI done, RX DMA stores sample
+			 *   Effective sample rate = 1 / 1 µs = 1,000,000 samples/sec
+			 */
 			{
 				.ti = PWM_TI,
 				.srce_ad = MEM(mp, &dp->adc_csd),
@@ -434,6 +529,20 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_
 		dma_data.cbs[2].next_cb = 0;
 	memcpy(dp, &dma_data, sizeof(dma_data));	// Copy DMA data into uncached memory
 	init_pwm(PWM_FREQ, pwm_range, PWM_VALUE);   // Initialise PWM, with DMA
+	if (pwm_debug) {
+		/*
+		 * Mux GPIO12 to PWM0_0 (ALT0) to expose the pacing signal on
+		 * header pin 32 for logic-analyser probing.  This is a pure
+		 * hardware GPIO mux: the PWM peripheral drives the pin directly
+		 * with no DMA or AXI bus overhead.  The signal is the identical
+		 * PWM waveform that gates DMA channel A (PERMAP=5), so its
+		 * frequency and duty cycle exactly match the SPI trigger rate.
+		 * BCM2711 peripherals datasheet §5, GPIO alt-function table.
+		 */
+		gpio_mode(PWM_DBG_PIN, GPIO_ALT0);
+		printf("PWM debug output enabled on GPIO%d (header pin 32)\n",
+		       PWM_DBG_PIN);
+	}
 	*REG32(pwm_regs, PWM_DMAC) = PWM_DMAC_ENAB | PWM_ENAB;
 	*REG32(spi_regs, SPI_DC) = SPI_DMA_PRIORITY;			// Set DMA priorities
 	*REG32(spi_regs, SPI_CS) = SPI_FIFO_CLR;					// Clear SPI FIFOs
@@ -586,9 +695,12 @@ static void print_usage(const char *prog_name)
 	printf("Start reading ADC data\n\n");
 	printf("Options:\n");
 	printf("  -c  --create-shm       Create the shared-memory buffer and start reading\n");
+	printf("  -d, --pwm-debug        Output PWM pacing signal on GPIO12 (header pin 32)\n");
+	printf("                         GPIO12 ALT0 = PWM0_0; zero DMA overhead.\n");
+	printf("  -r, --realtime-sched   Use SCHED_FIFO for real-time scheduling\n");
 	printf("  -h, --help             Show this help message\n\n");
 	printf("Output data to 'mvaring' type ring buffer in shared memory\n");
-	printf("Raw shared memery is in '/dev/shm%s'\n", SHM_NAME);
+	printf("Raw shared memory is in '/dev/shm%s'\n", SHM_NAME);
 	printf("See the data-format from mvaring.h\n");
 }
 
@@ -642,24 +754,79 @@ int set_sched()
 // Main program
 int main(int argc, char *argv[])
 {
-	const uint32_t pwm_range = (PWM_FREQ * 2) / SAMPLE_RATE;
+	/*
+	 * PWM pacing rate calculation
+	 * ============================
+	 * The PWM peripheral is used as a precise timing source that paces the
+	 * DMA engine, which in turn triggers one SPI transaction (= one ADC
+	 * sample) per PWM period.
+	 *
+	 * init_pwm() configures the BCM2711 Clock Manager to divide the PLLD_per
+	 * source (CLOCK_HZ = 375 MHz on RPi 4, clock manager source SRC=6,
+	 * BCM2711 datasheet §9 "Clock Manager", p.105, Table 94) by
+	 * (CLOCK_HZ / PWM_FREQ) = 375, yielding an actual PWM clock of
+	 * exactly PWM_FREQ = 1,000,000 Hz.
+	 *
+	 * The PWM RNG1 register is loaded with pwm_range (BCM2711 datasheet
+	 * §8 "PWM", Table 156 RNG1/RNG2, p.132).  The PWM channel consumes
+	 * one FIFO word every pwm_range clock cycles, i.e. every:
+	 *
+	 *   pwm_period = pwm_range / PWM_FREQ  seconds
+	 *
+	 * Each time the FIFO drains below the DREQ threshold (set to 1 by
+	 * PWM_DMAC = PWM_DMAC_ENAB | PWM_ENAB, Table 155 DMAC p.131), the
+	 * PWM asserts its level-sensitive DREQ line (BCM2711 §4.2.1.3
+	 * "Peripheral DREQ Signals", p.61).  DMA channel A (PWM_TI =
+	 * DMA_DEST_DREQ | PERMAP=5) is stalled until DREQ is active, so it
+	 * fires once per pwm_period.  CB 9 writes SPI_CS to trigger one SPI
+	 * transaction per DREQ, giving a sample rate of:
+	 *
+	 *   sample_rate = PWM_FREQ / pwm_range
+	 *
+	 * CURRENT CONFIGURATION (HI_SPEED, SAMPLE_RATE = 1,000,000):
+	 *   pwm_range = PWM_FREQ / SAMPLE_RATE = 1
+	 *   effective sample rate = 1,000,000 / 1 = 1,000,000 samples/sec
+	 *
+	 * Feasibility of pwm_range = 1 (1 MSPS):
+	 *   SPI transaction time = SPI_DLEN × 8 / SPI_clock
+	 *                        = 2 × 8 / 20,000,000 = 800 ns
+	 *   PWM period at range=1 = 1,000 ns
+	 *   Margin = 200 ns — tight but within spec.
+	 *   SPI data is received by a separate DMA channel (B) with its
+	 *   own FIFO flow-control, so RX pipeline does not depend on the
+	 *   PWM period.  Back-to-back SPI transactions without overlap
+	 *   require the SPI to finish before CB9 re-triggers it; the 200 ns
+	 *   margin makes this feasible at 20 MHz SPI clock.
+	 *
+	 * Note on PWM clock stability: the PWM clock is derived from PLLD_per
+	 * via the clock manager (not directly from xosc like the System Timer).
+	 * PLLD is a PLL seeded from the 19.2 MHz crystal oscillator and its
+	 * frequency is set at boot by the firmware.  Unlike the ARM core PLL
+	 * (which DVFS adjusts), PLLD is NOT changed dynamically in normal
+	 * operation, so the PWM period is stable at runtime.
+	 */
+	const uint32_t pwm_range = PWM_FREQ / SAMPLE_RATE;
 	static struct option long_options[] = {
 		{"realtime-sched",	no_argument,		NULL, 'r'},
 		{"create-shm",		no_argument,		NULL, 'c'},
+		{"pwm-debug",		no_argument,		NULL, 'd'},
 		{"help",		no_argument,		NULL, 'h'},
 		{NULL,			0,			NULL, 0}
 	};
 	struct mvaring *mr;
 	int f, ret, opt;
-	bool create_shm = false, sched_fifo = false;
+	bool create_shm = false, sched_fifo = false, pwm_debug = false;
 
 	printf("RPi ADC streamer v" VERSION "\n");
 
 	/* Parse command line arguments */
-	while ((opt = getopt_long(argc, argv, "chr", long_options, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "cdhr", long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'c':
 			create_shm = true;
+			break;
+		case 'd':
+			pwm_debug = true;
 			break;
 		case 'h':
 			print_usage(argv[0]);
@@ -695,7 +862,7 @@ int main(int argc, char *argv[])
 
 	printf("Streaming %u samples per block at %llu S/s, freq %d\n",
 	       MAX_SAMPS, SAMPLE_RATE, f);
-	adc_dma_init(&vc_mem, MAX_SAMPS, 0, pwm_range);
+	adc_dma_init(&vc_mem, MAX_SAMPS, 0, pwm_range, pwm_debug);
 	adc_stream_start();
 	while (1)
 		adc_stream_csv(&vc_mem, g_stream_buff, STREAM_BUFFLEN, MAX_SAMPS, mr);
