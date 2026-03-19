@@ -1,0 +1,682 @@
+/*
+ * rpi_ring_inspect.c - Interactive ring buffer file inspection tool
+ *
+ * Opens a binary file containing an mvaring ring buffer snapshot, validates
+ * it, then provides a split-screen ncurses shell for analysis commands.
+ *
+ * Screen layout:
+ *   +-------------------------------+
+ *   |  output / results area        |  (scrollable)
+ *   +-------------------------------+
+ *   |  status bar                   |
+ *   +-------------------------------+
+ *   |  command input  >_            |
+ *   +-------------------------------+
+ */
+
+#define _GNU_SOURCE
+#include <curses.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <math.h>
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include "common.h"
+#include "mvaring.h"
+
+/* ------------------------------------------------------------------ */
+/* Constants                                                            */
+/* ------------------------------------------------------------------ */
+
+#define CMD_MAX_LEN	256
+#define CMD_HISTORY_SZ	32
+#define OUT_BUF_LINES	4096	/* scrollback line count */
+#define OUT_LINE_LEN	512	/* max chars per output line */
+#define INPUT_ROWS	2	/* rows reserved for input (below separator) */
+
+/* ------------------------------------------------------------------ */
+/* Forward declarations                                                 */
+/* ------------------------------------------------------------------ */
+
+static void cmd_ts_stats(const char *args);
+static void cmd_info(const char *args);
+static void cmd_help(const char *args);
+static void cmd_quit(const char *args);
+
+/* ------------------------------------------------------------------ */
+/* Command dispatch table                                               */
+/*                                                                      */
+/* To add a new command:                                                */
+/*   1. Write a handler: static void cmd_foo(const char *args) { ... } */
+/*   2. Add an entry below: { "foo", cmd_foo, "description" }          */
+/* ------------------------------------------------------------------ */
+
+struct cmd_entry {
+	const char *name;
+	void (*handler)(const char *args);
+	const char *help;
+};
+
+static const struct cmd_entry g_commands[] = {
+	{ "ts_stats", cmd_ts_stats,
+	  "Avg/stddev/min/max of consecutive chunk timestamp intervals" },
+	{ "info",     cmd_info,
+	  "Show ring buffer metadata (version, indices, fill level)" },
+	{ "help",     cmd_help,
+	  "List available commands" },
+	{ "quit",     cmd_quit,
+	  "Exit the program" },
+	{ "q",        cmd_quit,
+	  "Exit the program (alias for quit)" },
+	{ NULL, NULL, NULL }  /* sentinel */
+};
+
+/* ------------------------------------------------------------------ */
+/* Global state                                                         */
+/* ------------------------------------------------------------------ */
+
+static struct mvaring	*g_ring;
+static size_t		 g_file_size;
+static const char	*g_filename;
+
+/* ncurses windows */
+static WINDOW *g_out_win;	/* upper scrollable output */
+static WINDOW *g_sep_win;	/* single-row separator / status bar */
+static WINDOW *g_inp_win;	/* lower command input area */
+
+/* Output scrollback ring */
+static char	g_out_buf[OUT_BUF_LINES][OUT_LINE_LEN];
+static int	g_out_total;	/* total lines ever appended (monotonic) */
+static int	g_out_scroll;	/* lines scrolled back from bottom (0=latest) */
+
+static bool	g_running = true;
+
+/* ------------------------------------------------------------------ */
+/* Output helpers                                                       */
+/* ------------------------------------------------------------------ */
+
+static void out_print(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
+static void out_print(const char *fmt, ...)
+{
+	va_list ap;
+	int slot = g_out_total % OUT_BUF_LINES;
+
+	va_start(ap, fmt);
+	vsnprintf(g_out_buf[slot], OUT_LINE_LEN, fmt, ap);
+	va_end(ap);
+	g_out_total++;
+}
+
+static void out_refresh(void)
+{
+	int rows, cols;
+
+	getmaxyx(g_out_win, rows, cols);
+	(void)cols;
+	wclear(g_out_win);
+
+	/* Oldest line still in the ring */
+	int oldest = (g_out_total > OUT_BUF_LINES)
+		     ? (g_out_total - OUT_BUF_LINES) : 0;
+
+	/* First line index to display, considering scroll */
+	int first = g_out_total - rows - g_out_scroll;
+	if (first < oldest) {
+		first = oldest;
+		/* Clamp scroll to prevent scrolling past oldest */
+		g_out_scroll = g_out_total - rows - oldest;
+		if (g_out_scroll < 0)
+			g_out_scroll = 0;
+	}
+
+	int row = 0;
+
+	for (int ln = first; ln < first + rows && ln < g_out_total; ln++, row++)
+		mvwprintw(g_out_win, row, 0, "%s", g_out_buf[ln % OUT_BUF_LINES]);
+
+	wrefresh(g_out_win);
+}
+
+/* ------------------------------------------------------------------ */
+/* Status bar                                                           */
+/* ------------------------------------------------------------------ */
+
+static void sep_refresh(void)
+{
+	int cols = getmaxx(g_sep_win);
+	unsigned w = atomic_load_explicit(&g_ring->windex, memory_order_relaxed);
+	unsigned rd = atomic_load_explicit(&g_ring->rindex, memory_order_relaxed);
+	unsigned avail = w - rd;
+
+	if (avail > NUM_DATA_CHUNKS)
+		avail = NUM_DATA_CHUNKS;
+
+	char status[OUT_LINE_LEN];
+	int n = snprintf(status, sizeof(status),
+			 " %s  v%u | %u/%u chunks",
+			 g_filename, g_ring->version, avail, NUM_DATA_CHUNKS);
+
+	if (g_out_scroll > 0 && n < (int)sizeof(status) - 1)
+		snprintf(status + n, sizeof(status) - n,
+			 "  [scrolled +%d]", g_out_scroll);
+
+	wattron(g_sep_win, A_REVERSE);
+	mvwprintw(g_sep_win, 0, 0, "%-*s", cols, status);
+	wattroff(g_sep_win, A_REVERSE);
+	wrefresh(g_sep_win);
+}
+
+/* ------------------------------------------------------------------ */
+/* Ring buffer helpers                                                  */
+/* ------------------------------------------------------------------ */
+
+/* Number of valid entries currently in the ring. */
+static unsigned int ring_valid_count(void)
+{
+	unsigned w = atomic_load_explicit(&g_ring->windex, memory_order_relaxed);
+	unsigned rd = atomic_load_explicit(&g_ring->rindex, memory_order_relaxed);
+	unsigned avail = w - rd;
+
+	return avail < NUM_DATA_CHUNKS ? avail : NUM_DATA_CHUNKS;
+}
+
+/*
+ * Logical chunk index i (0 = oldest, ring_valid_count()-1 = newest).
+ * Call ring_valid_count() first to know the valid range.
+ */
+static inline const struct adc_data *ring_chunk_at(unsigned oldest_abs,
+						    unsigned i)
+{
+	return &g_ring->buf[(oldest_abs + i) & BUFF_MASK];
+}
+
+/* ------------------------------------------------------------------ */
+/* Commands                                                             */
+/* ------------------------------------------------------------------ */
+
+static void cmd_info(const char *args)
+{
+	(void)args;
+
+	unsigned w  = atomic_load_explicit(&g_ring->windex, memory_order_relaxed);
+	unsigned rd = atomic_load_explicit(&g_ring->rindex, memory_order_relaxed);
+	unsigned avail = ring_valid_count();
+
+	out_print("--- Ring buffer info ---");
+	out_print("  Version        : %u  (expected %u)",
+		  g_ring->version, MVARING_VERSION);
+	out_print("  Struct size    : %u bytes  (sizeof: %zu)",
+		  g_ring->size, sizeof(struct mvaring));
+	out_print("  File size      : %zu bytes", g_file_size);
+	out_print("  windex         : %u", w);
+	out_print("  rindex         : %u", rd);
+	out_print("  Available      : %u / %u chunks  (%u samples each)",
+		  avail, NUM_DATA_CHUNKS, MAX_SAMPS);
+	out_print("  Dropped        : %u  (overwritten by slow reader)",
+		  g_ring->dropped);
+}
+
+/*
+ * cmd_ts_stats - analyse timestamp deltas between consecutive chunks.
+ *
+ * Each adc_data chunk carries a 'usecs' timestamp (microseconds since boot).
+ * We compute the interval between consecutive chunks, then report:
+ *   - average interval and implied sample rate
+ *   - standard deviation of the interval (jitter metric)
+ *   - minimum/maximum interval and their deviation from average
+ */
+static void cmd_ts_stats(const char *args)
+{
+	(void)args;
+
+	unsigned w  = atomic_load_explicit(&g_ring->windex, memory_order_relaxed);
+	unsigned rd = atomic_load_explicit(&g_ring->rindex, memory_order_relaxed);
+	unsigned avail = w - rd;
+
+	if (avail > NUM_DATA_CHUNKS)
+		avail = NUM_DATA_CHUNKS;
+
+	if (avail < 2) {
+		out_print("ts_stats: need >= 2 chunks in buffer (have %u)", avail);
+		return;
+	}
+
+	unsigned oldest = w - avail;	/* absolute index of oldest entry */
+	unsigned count  = avail - 1;	/* number of consecutive pairs */
+
+	double sum = 0.0;
+	double min_diff =  1e18;
+	double max_diff = -1e18;
+
+	/* First pass: avg and min/max */
+	for (unsigned i = 0; i < count; i++) {
+		const struct adc_data *a = ring_chunk_at(oldest, i);
+		const struct adc_data *b = ring_chunk_at(oldest, i + 1);
+		/*
+		 * uint32_t usecs wraps at ~4295 s. For typical recordings
+		 * (< 1 s at 1 MSPS / 8192 chunks) wrap is not an issue.
+		 * Cast difference to int32_t to handle the rare wrap case.
+		 */
+		double diff = (double)(int32_t)(b->usecs - a->usecs);
+
+		sum += diff;
+		if (diff < min_diff) min_diff = diff;
+		if (diff > max_diff) max_diff = diff;
+	}
+
+	double avg = sum / count;
+
+	/* Second pass: std deviation and signed deviations from avg */
+	double max_dev = -1e18;
+	double min_dev =  1e18;
+	double sum_sq  = 0.0;
+
+	for (unsigned i = 0; i < count; i++) {
+		const struct adc_data *a = ring_chunk_at(oldest, i);
+		const struct adc_data *b = ring_chunk_at(oldest, i + 1);
+		double diff = (double)(int32_t)(b->usecs - a->usecs);
+		double dev  = diff - avg;
+
+		sum_sq += dev * dev;
+		if (dev > max_dev) max_dev = dev;
+		if (dev < min_dev) min_dev = dev;
+	}
+
+	double stddev = sqrt(sum_sq / count);
+	double ksps = (avg > 0.0) ? (double)MAX_SAMPS / avg * 1000.0 : 0.0;
+
+	out_print("--- Timestamp statistics (%u pairs from %u chunks) ---", count, avail);
+	out_print("  Avg chunk interval : %8.3f us  =>  %.1f kSPS",
+		  avg, ksps);
+	out_print("  Std deviation      : %8.3f us  (%.3f %% of avg)",
+		  stddev, avg > 0.0 ? 100.0 * stddev / avg : 0.0);
+	out_print("  Min interval       : %8.3f us  (dev: %+.3f us, %+.2f %%)",
+		  min_diff, min_diff - avg,
+		  avg > 0.0 ? 100.0 * (min_diff - avg) / avg : 0.0);
+	out_print("  Max interval       : %8.3f us  (dev: %+.3f us, %+.2f %%)",
+		  max_diff, max_diff - avg,
+		  avg > 0.0 ? 100.0 * (max_diff - avg) / avg : 0.0);
+	out_print("  Jitter range       : %8.3f us  (max - min)",
+		  max_diff - min_diff);
+}
+
+static void cmd_help(const char *args)
+{
+	(void)args;
+
+	out_print("Available commands:");
+	for (int i = 0; g_commands[i].name; i++)
+		out_print("  %-12s  %s", g_commands[i].name, g_commands[i].help);
+	out_print("Scroll output:  PgUp / PgDn");
+	out_print("Command history: Up / Down arrow keys");
+}
+
+static void cmd_quit(const char *args)
+{
+	(void)args;
+	g_running = false;
+}
+
+/* ------------------------------------------------------------------ */
+/* Command dispatcher                                                   */
+/* ------------------------------------------------------------------ */
+
+static void dispatch(const char *line)
+{
+	/* Skip leading whitespace */
+	while (*line == ' ' || *line == '\t')
+		line++;
+
+	if (!*line)
+		return;
+
+	/* Split into verb and tail arguments */
+	char verb[CMD_MAX_LEN];
+	const char *args = "";
+	const char *sp = strchr(line, ' ');
+
+	if (sp) {
+		size_t len = (size_t)(sp - line);
+
+		if (len >= CMD_MAX_LEN)
+			len = CMD_MAX_LEN - 1;
+		memcpy(verb, line, len);
+		verb[len] = '\0';
+		args = sp + 1;
+		while (*args == ' ')
+			args++;
+	} else {
+		strncpy(verb, line, CMD_MAX_LEN - 1);
+		verb[CMD_MAX_LEN - 1] = '\0';
+	}
+
+	out_print("> %s", line);
+
+	for (int i = 0; g_commands[i].name; i++) {
+		if (strcmp(verb, g_commands[i].name) == 0) {
+			g_commands[i].handler(args);
+			return;
+		}
+	}
+
+	out_print("Unknown command '%s'. Type 'help' for list.", verb);
+}
+
+/* ------------------------------------------------------------------ */
+/* ncurses layout                                                       */
+/* ------------------------------------------------------------------ */
+
+static void setup_windows(void)
+{
+	int rows, cols;
+
+	getmaxyx(stdscr, rows, cols);
+
+	int out_rows = rows - 1 - INPUT_ROWS;	/* separator + input rows */
+
+	if (out_rows < 3)
+		out_rows = 3;
+
+	if (g_out_win) delwin(g_out_win);
+	if (g_sep_win) delwin(g_sep_win);
+	if (g_inp_win) delwin(g_inp_win);
+
+	g_out_win = newwin(out_rows,	cols, 0,		0);
+	g_sep_win = newwin(1,		cols, out_rows,		0);
+	g_inp_win = newwin(INPUT_ROWS,	cols, out_rows + 1,	0);
+
+	scrollok(g_out_win, FALSE);
+	keypad(g_inp_win, TRUE);
+}
+
+static void inp_redraw(const char *buf, int cursor)
+{
+	wclear(g_inp_win);
+	mvwprintw(g_inp_win, 0, 0, "> %s", buf);
+	wmove(g_inp_win, 0, 2 + cursor);
+	wrefresh(g_inp_win);
+}
+
+/* ------------------------------------------------------------------ */
+/* Main event / input loop                                              */
+/* ------------------------------------------------------------------ */
+
+static void run_ui(void)
+{
+	char cmd_buf[CMD_MAX_LEN] = { 0 };
+	int  cmd_len = 0;
+	int  cursor  = 0;
+
+	char history[CMD_HISTORY_SZ][CMD_MAX_LEN];
+	int  hist_count = 0;
+	int  hist_pos   = -1;	/* -1 = editing fresh line */
+
+	/* Show banner on startup */
+	cmd_info(NULL);
+	out_print("Type 'help' for available commands, 'quit' to exit.");
+
+	out_refresh();
+	sep_refresh();
+	inp_redraw(cmd_buf, cursor);
+
+	while (g_running) {
+		int ch = wgetch(g_inp_win);
+
+		switch (ch) {
+
+		case KEY_RESIZE:
+			setup_windows();
+			out_refresh();
+			sep_refresh();
+			inp_redraw(cmd_buf, cursor);
+			break;
+
+		/* --- Output scrolling --- */
+		case KEY_PPAGE:		/* Page Up   */
+			g_out_scroll += getmaxy(g_out_win);
+			out_refresh();
+			sep_refresh();
+			break;
+
+		case KEY_NPAGE:		/* Page Down */
+			g_out_scroll -= getmaxy(g_out_win);
+			if (g_out_scroll < 0)
+				g_out_scroll = 0;
+			out_refresh();
+			sep_refresh();
+			break;
+
+		/* --- Command history --- */
+		case KEY_UP:
+			if (hist_count > 0 && hist_pos < hist_count - 1) {
+				hist_pos++;
+				int hi = (hist_count - 1 - hist_pos) % CMD_HISTORY_SZ;
+
+				strncpy(cmd_buf, history[hi], CMD_MAX_LEN - 1);
+				cmd_buf[CMD_MAX_LEN - 1] = '\0';
+				cmd_len = strlen(cmd_buf);
+				cursor  = cmd_len;
+				inp_redraw(cmd_buf, cursor);
+			}
+			break;
+
+		case KEY_DOWN:
+			if (hist_pos > 0) {
+				hist_pos--;
+				int hi = (hist_count - 1 - hist_pos) % CMD_HISTORY_SZ;
+
+				strncpy(cmd_buf, history[hi], CMD_MAX_LEN - 1);
+				cmd_buf[CMD_MAX_LEN - 1] = '\0';
+				cmd_len = strlen(cmd_buf);
+				cursor  = cmd_len;
+			} else {
+				hist_pos    = -1;
+				cmd_buf[0]  = '\0';
+				cmd_len     = 0;
+				cursor      = 0;
+			}
+			inp_redraw(cmd_buf, cursor);
+			break;
+
+		/* --- Cursor movement --- */
+		case KEY_LEFT:
+			if (cursor > 0) {
+				cursor--;
+				inp_redraw(cmd_buf, cursor);
+			}
+			break;
+
+		case KEY_RIGHT:
+			if (cursor < cmd_len) {
+				cursor++;
+				inp_redraw(cmd_buf, cursor);
+			}
+			break;
+
+		case KEY_HOME:
+		case 1:		/* Ctrl-A */
+			cursor = 0;
+			inp_redraw(cmd_buf, cursor);
+			break;
+
+		case KEY_END:
+		case 5:		/* Ctrl-E */
+			cursor = cmd_len;
+			inp_redraw(cmd_buf, cursor);
+			break;
+
+		/* --- Editing --- */
+		case KEY_BACKSPACE:
+		case 127:
+		case '\b':
+			if (cursor > 0) {
+				memmove(&cmd_buf[cursor - 1], &cmd_buf[cursor],
+					cmd_len - cursor + 1);
+				cmd_len--;
+				cursor--;
+				inp_redraw(cmd_buf, cursor);
+			}
+			break;
+
+		case KEY_DC:	/* Delete key */
+			if (cursor < cmd_len) {
+				memmove(&cmd_buf[cursor], &cmd_buf[cursor + 1],
+					cmd_len - cursor);
+				cmd_len--;
+				inp_redraw(cmd_buf, cursor);
+			}
+			break;
+
+		case 21:	/* Ctrl-U: clear line */
+			cmd_buf[0] = '\0';
+			cmd_len    = 0;
+			cursor     = 0;
+			inp_redraw(cmd_buf, cursor);
+			break;
+
+		case 11:	/* Ctrl-K: clear to end of line */
+			cmd_buf[cursor] = '\0';
+			cmd_len = cursor;
+			inp_redraw(cmd_buf, cursor);
+			break;
+
+		/* --- Execute --- */
+		case '\n':
+		case '\r':
+		case KEY_ENTER:
+			if (cmd_len > 0) {
+				/* save to history */
+				strncpy(history[hist_count % CMD_HISTORY_SZ],
+					cmd_buf, CMD_MAX_LEN - 1);
+				hist_count++;
+				hist_pos = -1;
+
+				dispatch(cmd_buf);
+
+				cmd_buf[0] = '\0';
+				cmd_len    = 0;
+				cursor     = 0;
+
+				/* Jump back to latest output */
+				g_out_scroll = 0;
+				out_refresh();
+				sep_refresh();
+			}
+			inp_redraw(cmd_buf, cursor);
+			break;
+
+		default:
+			/* Printable ASCII */
+			if (ch >= 32 && ch < 127 && cmd_len < CMD_MAX_LEN - 1) {
+				memmove(&cmd_buf[cursor + 1], &cmd_buf[cursor],
+					cmd_len - cursor + 1);
+				cmd_buf[cursor] = (char)ch;
+				cmd_len++;
+				cursor++;
+				inp_redraw(cmd_buf, cursor);
+			}
+			break;
+		}
+	}
+}
+
+/* ------------------------------------------------------------------ */
+/* File loading                                                         */
+/* ------------------------------------------------------------------ */
+
+static struct mvaring *load_ring_file(const char *path)
+{
+	int fd = open(path, O_RDONLY);
+
+	if (fd < 0) {
+		perror(path);
+		return NULL;
+	}
+
+	struct stat st;
+
+	if (fstat(fd, &st) < 0) {
+		perror("fstat");
+		close(fd);
+		return NULL;
+	}
+
+	if ((size_t)st.st_size < sizeof(struct mvaring)) {
+		fprintf(stderr,
+			"%s: file too small (%zu bytes, need at least %zu)\n",
+			path, (size_t)st.st_size, sizeof(struct mvaring));
+		close(fd);
+		return NULL;
+	}
+
+	void *addr = mmap(NULL, (size_t)st.st_size, PROT_READ,
+			  MAP_PRIVATE, fd, 0);
+	close(fd);
+
+	if (addr == MAP_FAILED) {
+		perror("mmap");
+		return NULL;
+	}
+
+	g_file_size = (size_t)st.st_size;
+	return (struct mvaring *)addr;
+}
+
+/* ------------------------------------------------------------------ */
+/* main                                                                 */
+/* ------------------------------------------------------------------ */
+
+int main(int argc, char *argv[])
+{
+	if (argc != 2) {
+		fprintf(stderr, "Usage: %s <ring-buffer-file>\n", argv[0]);
+		fprintf(stderr,
+			"  Opens a binary mvaring snapshot and provides an "
+			"interactive analysis shell.\n");
+		return 1;
+	}
+
+	g_filename = argv[1];
+	g_ring = load_ring_file(g_filename);
+	if (!g_ring)
+		return 1;
+
+	if (!ring_is_ok(g_ring)) {
+		fprintf(stderr,
+			"%s: not a valid mvaring ring buffer\n", g_filename);
+		fprintf(stderr, "  version: %u (expected %u)\n",
+			g_ring->version, MVARING_VERSION);
+		fprintf(stderr, "  size:    %u (expected >= %zu)\n",
+			g_ring->size, sizeof(struct mvaring));
+		munmap(g_ring, g_file_size);
+		return 1;
+	}
+
+	/* Initialise ncurses */
+	initscr();
+	cbreak();
+	noecho();
+	curs_set(1);
+
+	if (has_colors()) {
+		start_color();
+		use_default_colors();
+	}
+
+	setup_windows();
+	run_ui();
+
+	endwin();
+	munmap(g_ring, g_file_size);
+	printf("Bye.\n");
+	return 0;
+}
