@@ -125,6 +125,7 @@ typedef struct {
 #define DMA_CHAN_A      7
 #define DMA_CHAN_B      8
 #define DMA_CHAN_C      9
+#define DMA_CHAN_D      10
 #define DMA_PWM_DREQ    5
 #define DMA_SPI_TX_DREQ 6
 #define DMA_SPI_RX_DREQ 7
