@@ -1,11 +1,12 @@
 function init(){
+	const samples = 128;
 	var adsample = struct({
 		data     : uint16(),
 		dummy    : uint16()
 	});
 	adsample.byteOrder = "big-endian";
 
-	var adsamples = array(adsample, 1024);
+	var adsamples = array(adsample, samples);
 	//adsamples.byteOrder = "big-endian";
 //	adsamples.byteOrder = "big-endian";
 
@@ -13,7 +14,7 @@ function init(){
 		usecs    : uint32(),
 //		samples  : array(uint32(), 1024),
 		datasamples  : adsamples,
-		gpiomask : array(uint32(), 1024)
+		gpiomask : array(uint32(), samples)
 	});
 
 	var mvaring = struct({
@@ -23,7 +24,7 @@ function init(){
 		size     : uint32(),
 		rindex   : uint32(),
 		windex   : uint32(),
-		adcdata : array(record, 100) //FIXME: size hardcoded, no length in format, read until EOF
+		adcdata : array(record, 201) //FIXME: size hardcoded, no length in format, read until EOF
 	});
 	mvaring.defaultLockOffset = 0;
 

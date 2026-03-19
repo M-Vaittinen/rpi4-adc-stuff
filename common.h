@@ -3,8 +3,8 @@
 
 //#define BE_LAZY
 
-#define MAX_SAMPS	1024
-//#define MAX_SAMPS	32
+//#define MAX_SAMPS	1024
+#define MAX_SAMPS	128
 #define BUFF_MASK	0x1FFF
 //#define BUFF_MASK	0xFF
 //#define NUM_DATA_CHUNKS 0x1FFF 
