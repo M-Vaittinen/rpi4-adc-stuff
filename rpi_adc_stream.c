@@ -52,6 +52,7 @@
 		#error "Either HI_SPEED or LO_SPEED is required"
 	#endif
 	#define SAMPLE_RATE	 MEGA(1)
+//	#define SAMPLE_RATE	 KILO(100)
 	#define SPI_FREQ	MEGA(20)
 #endif
 
@@ -105,9 +106,10 @@
 #define TRIGGER_POLARITY 1	  // Active high
 
 // DMA transfer information for PWM and SPI
-#define PWM_TI		(DMA_DEST_DREQ | (DMA_PWM_DREQ << 16) | DMA_WAIT_RESP)
-#define SPI_RX_TI	(DMA_SRCE_DREQ | (DMA_SPI_RX_DREQ << 16) | DMA_WAIT_RESP | DMA_CB_DEST_INC)
-#define SPI_TX_TI	(DMA_DEST_DREQ | (DMA_SPI_TX_DREQ << 16) | DMA_WAIT_RESP | DMA_CB_SRCE_INC)
+#define PWM_TI		(DMA_DEST_DREQ	| (DMA_PWM_DREQ << 16) | DMA_WAIT_RESP)
+#define SPI_RX_TI	(DMA_SRCE_DREQ	| (DMA_SPI_RX_DREQ << 16) | DMA_WAIT_RESP | DMA_CB_DEST_INC)
+#define SPI_TX_TI	(DMA_DEST_DREQ	| (DMA_SPI_TX_DREQ << 16) | DMA_WAIT_RESP | DMA_CB_SRCE_INC)
+#define NOWAIT_RX_TI	(DMA_SRCE_DREQ 	| /* PERMAP */ 0	  | DMA_WAIT_RESP | 0)
 
 // SPI 0 pin definitions
 #define SPI0_CE0_PIN	8
@@ -143,9 +145,44 @@
 // SPI register strings
 //static char *g_spi_regstrs[] = {"CS", "FIFO", "CLK", "DLEN", "LTOH", "DC", ""};
 
-// Microsecond timer
+/*
+ * BCM2711 System Timer - free-running 1 MHz counter
+ *
+ * Register: ST_CLO (System Timer Counter Lower 32 bits)
+ *   Bus address : 0x7E003004  (base 0x7E003000, offset 0x04)
+ *   Phys addr   : 0xFE003004  on Raspberry Pi 4
+ *   Access      : read-only, 32-bit
+ *
+ * The counter increments by 1 every microsecond.  It wraps around
+ * from 0xFFFFFFFF to 0x00000000 after ~4295 s (~71 min).
+ *
+ * Clock source and firmware independence:
+ *   The System Timer clock (BCM2835_CLOCK_TIMER) is derived from the
+ *   19.2 MHz crystal oscillator ("xosc") via the BCM Clock Manager
+ *   (CM_TIMERCTL / CM_TIMERDIV registers), not from any PLL.
+ *   Consequently:
+ *     - The 1 MHz rate is fixed and does NOT change with ARM CPU
+ *       frequency scaling (DVFS) or VideoCore/GPU clock adjustments
+ *       made by the Raspberry Pi firmware (start4.elf).
+ *     - The only source of long-term frequency error is the crystal's
+ *       own tolerance (typically ±20–50 ppm for standard crystals,
+ *       ±1–5 ppm for precision types).
+ *     - Short-term jitter comes from the integer clock divider
+ *       (19.2 MHz / 19 = ~1.011 MHz with fractional correction), which
+ *       is negligible for microsecond-resolution measurements.
+ *
+ * Reference: BCM2711 ARM Peripherals datasheet
+ *   Chapter 10 "System Timer", pages 142–143
+ *   File: docs/RP-008248-DS-1-bcm2711-peripherals.pdf
+ *
+ * Linux kernel confirmation:
+ *   arch/arm/boot/dts/broadcom/bcm283x.dtsi — timer@7e003000 node,
+ *   clock-frequency = <1000000>.
+ *   drivers/clk/bcm/clk-bcm2835.c — BCM2835_CLOCK_TIMER registered
+ *   with REGISTER_OSC_CLK (xosc parent), confirming crystal derivation.
+ */
 #define USEC_BASE	(PHYS_REG_BASE + 0x3000)
-#define USEC_TIME	0x04
+#define USEC_TIME	0x04	/* ST_CLO: lower 32 bits of 64-bit 1 MHz counter */
 static uint32_t g_usec_start;
 
 // Buffer for streaming output, and raw Rx data
@@ -278,8 +315,17 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_
 		.rxd2 = {0},
 		.cbs = {
 		// Rx input: read data from usec clock and SPI, into 2 ping-pong buffers
+			/*
+			 * CB 0 — capture timestamp for ping buffer.
+			 * Reads ST_CLO (BCM2711 System Timer, bus addr 0x7E003004)
+			 * into usecs[0].  ST_CLO increments at exactly 1 MHz from
+			 * the 19.2 MHz crystal oscillator — independent of ARM/GPU
+			 * clock scaling.  See USEC_BASE/USEC_TIME comment above and
+			 * BCM2711 datasheet Ch. 10, pp. 142–143.
+			 */
 			{
 				.ti = SPI_RX_TI,
+//				.ti = NOWAIT_RX_TI,
 				.srce_ad = REG(usec_regs, USEC_TIME),
 				.dest_ad = MEM(mp, &dp->usecs[0]),
 				.tfr_len = 4,
@@ -294,17 +340,24 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_
 				.tfr_len = nsamp*4,
 				.stride = 0,
 				.next_cb = CBS(2),
+		//		.next_cb = CBS(4),
 				.debug = 0
 			}, // 1
 			{
-				.ti = SPI_RX_TI,
+//				.ti = SPI_RX_TI,
+				.ti = NOWAIT_RX_TI,
 				.srce_ad = REG(spi_regs, SPI_CS),
 				.dest_ad = MEM(mp, &dp->states[0]),
 				.tfr_len = 4,
 				.stride = 0,
 				.next_cb = CBS(3),
+//				.next_cb = CBS(4),
 				.debug = 0
 			}, // 2
+			/*
+			 * CB 3 — capture timestamp for pong buffer (mirror of CB 0).
+			 * Same ST_CLO source; result stored in usecs[1].
+			 */
 			{
 				.ti = SPI_RX_TI,
 				.srce_ad = REG(usec_regs, USEC_TIME),
@@ -321,15 +374,18 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single, const uint32_t pwm_
 				.tfr_len = nsamp*4,
 				.stride = 0,
 				.next_cb = CBS(5),
+//				.next_cb = CBS(1),
 				.debug = 0
 			}, // 4
 			{
-				.ti = SPI_RX_TI,
+//				.ti = SPI_RX_TI,
+				.ti = NOWAIT_RX_TI,
 				.srce_ad = REG(spi_regs, SPI_CS),
 				.dest_ad = MEM(mp, &dp->states[1]),
 				.tfr_len = 4,
 				.stride = 0,
 				.next_cb = CBS(0),
+//				.next_cb = CBS(1),
 				.debug = 0
 			}, // 5
 		// Tx output: 2 data writes to SPI for chan 0 & 1, or both chan 0
