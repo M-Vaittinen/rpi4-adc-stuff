@@ -301,6 +301,11 @@ void init_pwm(int freq, int range, int val)
     while ((*REG32(clk_regs, CLK_PWM_CTL) & (1 << 7)) == 0) ;
 #endif
     usleep(100);
+    /* Flush residual FIFO data from any previous run (BCM2711 §8, PWM_CTL
+     * bit 6 = CLRF1: "Writing 1 clears the FIFO; writing 0 has no effect.
+     * This is a single-shot operation.") */
+    *REG32(pwm_regs, PWM_CTL) = PWM_CTL_CLRF1;
+    usleep(10);
     *REG32(pwm_regs, PWM_RNG1) = range;
     *REG32(pwm_regs, PWM_FIF1) = val;
     usleep(100);

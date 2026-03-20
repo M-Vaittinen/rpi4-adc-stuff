@@ -174,6 +174,7 @@ typedef struct {
 #define PWM_DAT2        0x24   // Channel 2 data
 // PWM register values
 #define PWM_CTL_RPTL1   (1<<2)  // Chan 1: repeat last data when FIFO empty
+#define PWM_CTL_CLRF1   (1<<6)  // Clear FIFO 1 — write-only, one-shot
 #define PWM_CTL_USEF1   (1<<5)  // Chan 1: use FIFO
 #define PWM_DMAC_ENAB   (1<<31) // Start PWM DMA
 #define PWM_ENAB        1       // Enable PWM
