@@ -52,8 +52,22 @@
 	#ifndef HI_SPEED
 		#error "Either HI_SPEED or LO_SPEED is required"
 	#endif
-	#define SAMPLE_RATE	 MEGA(1)
+	#define SAMPLE_RATE	 KILO(250)
 //	#define SAMPLE_RATE	 KILO(100)
+	/*
+	 * SPI_FREQ for 250 kSPS:
+	 *
+	 * Each SPI sample requires:
+	 *   - DMA dispatch lag (CB8→CB9, DREQ→ACT): ~340 ns (measured)
+	 *   - SPI active (16 bits at SPI_FREQ): 16 / SPI_FREQ seconds
+	 *   - Total must fit within 1 PWM period (4 µs at 250 kSPS)
+	 *
+	 * At 25 MHz: SPI = 640 ns, total = 340+640 = 980 ns << 4000 ns
+	 *   → Substantial margin; no risk of dropped triggers at 250 kSPS.
+	 *
+	 * Note: verify the ADC's SPI clock spec before increasing frequency.
+	 */
+	//#define SPI_FREQ	MEGA(25)
 	#define SPI_FREQ	MEGA(20)
 #endif
 
@@ -61,7 +75,7 @@
 
 // SPI clock frequency
 #define MIN_SPI_FREQ	10000
-#define MAX_SPI_FREQ	MEGA(20)
+#define MAX_SPI_FREQ	MEGA(25)
 
 // PWM definitions: divisor, and reload value
 // PWM_VALUE is the seed word written to the FIFO before DMA takes over.
@@ -118,15 +132,17 @@
  *
  * SIGNAL CHARACTERISTICS
  * ======================
- * With the empirical ×2 factor in pwm_range (pwm_range=2) and the observed
+ * With the empirical ×2 factor in pwm_range and the observed
  * PLLD_per ≈ 2×CLOCK_HZ (≈750 MHz on recent RPi 4 firmware), the actual
- * PWM clock is ≈2 MHz.  RNG1 = pwm_range = 2, DATA1 = pwm_val = 1, so:
+ * PWM clock is ≈2 MHz.  RNG1 = pwm_range = (PWM_FREQ*2)/SAMPLE_RATE,
+ * DATA1 = pwm_val = 1, so:
  *
- *   duty cycle = DATA1 / RNG1 = 1/2 = 50%
- *   period     = RNG1 / actual_pwm_clock = 2 / 2 MHz = 1 µs  (1 MHz)
+ *   duty cycle = DATA1 / RNG1 = 1/pwm_range  (≈12.5% at 250 kSPS, pwm_range=8)
+ *   period     = RNG1 / actual_pwm_clock = pwm_range / 2 MHz
+ *              = 8 / 2 MHz = 4 µs  (250 kHz square wave at 250 kSPS)
  *
- * Result: clean 1 MHz square wave with ~50% duty cycle.  No oversampling
- * needed, and the PWM clock/range used for DREQ pacing is unchanged.
+ * Result: square wave at the current sample rate frequency.  The duty cycle
+ * changes with pwm_range but that is harmless — the DREQ rate is unchanged.
  */
 #define PWM_DBG_PIN		12	/* GPIO12, Header Pin 32, ALT0 = PWM0_0 */
 
@@ -336,7 +352,8 @@ typedef struct {
 
 // Initialise PWM-paced DMA for ADC sampling
 static void adc_dma_init(MEM_MAP *mp, int nsamp, int single,
-			 const uint32_t pwm_range, bool pwm_debug)
+			 const uint32_t pwm_range, bool pwm_debug,
+			 uint32_t clock_div)
 {
 	/*
 	 * Debug mode (--pwm-debug) muxes GPIO12 to PWM0_0 (ALT0) so the live
@@ -348,8 +365,12 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single,
 	 *
 	 * pwm_val = 1 (DATA1) in both modes; DATA1 has no effect on the
 	 * DREQ mechanism.
+	 *
+	 * clock_div: diagnostic divisor for --clock-div; reduces pwm_clock
+	 * while keeping pwm_range_act unchanged so only the PWM period is
+	 * stretched.  In normal operation clock_div = 1 (no change).
 	 */
-	const uint32_t pwm_clock    = (uint32_t)PWM_FREQ;
+	const uint32_t pwm_clock    = (uint32_t)PWM_FREQ / clock_div;
 	const uint32_t pwm_range_act = pwm_range;
 
 	ADC_DMA_DATA *dp = mp->virt;
@@ -461,22 +482,26 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single,
 			 * How pacing works:
 			 *   The PWM DMAC register has DREQ threshold = 1 (set via
 			 *   PWM_DMAC = PWM_DMAC_ENAB | PWM_ENAB = 0x80000001,
-			 *   BCM2711 Table 155, §8.6 p.131).  The DREQ line is
-			 *   asserted (high = "I need data") whenever the 64-word
-			 *   FIFO drops below this threshold, i.e. when it is empty.
+			 *   BCM2711 Table 155, §8.6 p.131).  The BCM2711 docs do
+			 *   not state the comparison operator, but empirical
+			 *   testing (ai-gen-tests/test_pwm_dreq.c) confirmed that
+			 *   the comparison is STRICTLY "<": DREQ asserts only when
+			 *   level < threshold, i.e. only when the FIFO is empty
+			 *   (level = 0) with threshold = 1.
 			 *   Because DREQ is level-sensitive (§4.2.1.3, p.61), DMA
 			 *   channel A stalls here until DREQ is active.
 			 *
 			 *   This CB writes pwm_val (= 1, DATA1) to PWM_FIF1
 			 *   (BCM2711 §8.6 Table 158, p.132 — write-only FIFO
 			 *   input register at PWM base + 0x18).  One word enters
-			 *   the FIFO, DREQ de-asserts (FIFO no longer empty).
+			 *   the FIFO (level 0→1); DREQ de-asserts (1 is not < 1).
 			 *
 			 *   The PWM channel (configured in serialiser mode with
 			 *   USEF1=1, PWEN1=1 via start_pwm()) consumes that word
 			 *   in exactly pwm_range PWM-clock cycles (= pwm_range µs
-			 *   at PWM_FREQ=1 MHz).  After pwm_range µs the FIFO is
-			 *   empty again and DREQ re-asserts for the next cycle.
+			 *   at PWM_FREQ=1 MHz).  After pwm_range µs the FIFO
+			 *   level drops again and DREQ re-asserts for the next
+			 *   cycle.
 			 *
 			 * Trigger rate derivation:
 			 *   f_trigger = pwm_clock / pwm_range_act
@@ -508,17 +533,12 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single,
 			 * 0x0C).  This programs the SPI peripheral for exactly
 			 * one 16-bit ADC sample per triggered transaction.
 			 *
-			 * DREQ is still asserted here: the BCM2711 PWM DMAC DREQ
-			 * threshold semantics are "level ≤ threshold" (§8.6
-			 * Table 155, p.131: "...whenever the FIFO level is less
-			 * than or equal to this value").  After the PREVIOUS
-			 * period's CB 7 wrote one word, level = 1 ≤ threshold = 1,
-			 * so DREQ stayed asserted.  CB 7 then stalled after its
-			 * write (next CB 8 blocked).  When PWM reads that word at
-			 * the start of the new period the level drops back toward
-			 * 1, keeping DREQ asserted.  CB 8 writes to SPI_DLEN —
-			 * not to the PWM FIFO — so the FIFO level and DREQ remain
-			 * unchanged.
+			 * DREQ is asserted here because the FIFO is empty
+			 * (level = 0 < threshold = 1, confirmed by empirical
+			 * test — see CB 9 comment).  CB 7 from the previous
+			 * period wrote one word which PWM has since consumed.
+			 * CB 8 writes to SPI_DLEN — not to the PWM FIFO — so
+			 * the FIFO remains empty and DREQ remains asserted.
 			 */
 			{
 				.ti = PWM_TI,
@@ -551,16 +571,30 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single,
 			 *
 			 * HOW THE DREQ-PACING CHAIN ACTUALLY OPERATES
 			 * ============================================
-			 * BCM2711 §8.6 p.131 (Table 155, DREQ field): "The FIFO
-			 * source will signal DMA DREQ whenever the FIFO level is
-			 * less than or equal to this value."  With threshold = 1:
-			 *   DREQ asserted  when level ≤ 1 (0 or 1 words in FIFO)
-			 *   DREQ de-asserted when level = 2 (after CB 7 writes)
+			 * BCM2711 §8.6 p.131 (Table 155, DREQ field) gives the
+			 * threshold value but not its comparison operator.
+			 * Empirical testing on RPi 4 (ai-gen-tests/test_pwm_dreq.c)
+			 * confirmed that the comparison is STRICTLY "<":
+			 *   DREQ asserts when level < threshold (= 0, when thr=1)
+			 *   DREQ de-asserts when level >= threshold (= 1 word)
 			 *
-			 * Steady-state FIFO level oscillates 2→1→2→1…:
-			 *   PWM reads one word per period (level 2→1) → DREQ fires
-			 *   CB 8→9→7 execute: SPI triggered, FIFO refilled (1→2)
-			 *   → DREQ de-asserts; CB 8 stalls until next period
+			 * Note: the analogous SPI TDREQ field (§9.5 Table 165
+			 * p.139) uses "≤", but PWM behaves differently.
+			 *
+			 * Steady-state FIFO level oscillates 1→0→1→0:
+			 *   PWM reads the 1 word → level = 0 → DREQ fires.
+			 *   CB 8→9→7 execute: SPI triggered, FIFO refilled (→1).
+			 *   DREQ de-asserts; CB 8 stalls until next period.
+			 *
+			 * The PWM serialiser stalls briefly while the FIFO is
+			 * empty (BCM2711 §8.4 p.128: "channel sends continuously
+			 * as long as FIFO is not empty").  The stall lasts for
+			 * the CB 8+CB 9 DMA execution time (≪ 1 µs) and
+			 * introduces a small amount of sub-period jitter.
+			 * At 1 MSPS this has not been observed to affect sample
+			 * integrity, but for higher precision timing consider
+			 * priming with 2 words and raising DREQ threshold to 2
+			 * (see ai-gen-tests/test_pwm_dreq.c for the fix).
 			 *
 			 * KEY POINT: in steady state the DMA runs CB 8→CB 9→CB 7
 			 * each period (not CB 7→8→9 as the chain order suggests).
@@ -571,16 +605,16 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single,
 			 * the full period duration for the SPI to complete.
 			 *
 			 * One complete sample cycle (actual PWM clock ≈ 2 MHz,
-			 * RNG = 2, period = 1 µs; see pwm_range note in main()):
-			 *   t = 0        PWM reads word; level 2→1; DREQ fires
-			 *   t = 0+ε      CB 8 sets SPI_DLEN  (no FIFO write; DREQ stays on)
-			 *   t = 0+2ε     CB 9 writes SPI_CS → SPI starts (800 ns)
-			 *   t = 0+3ε     CB 7 writes pwm_val; level 1→2; DREQ off; CB 8 stalls
-			 *   t = 0–0.5µs  PWM HIGH (DATA=1 of RNG=2 ticks at 2 MHz)
-			 *   t = 0.5–1µs  PWM LOW
-			 *   t ≈ 800 ns   SPI complete; RX DMA stores sample
-			 *   t = 1 µs     Next period: level 2→1; DREQ fires; cycle repeats
-			 *   Sample rate = 1 / 1 µs = 1,000,000 samples/sec
+			 * RNG = pwm_range = 8, period = 4 µs at 250 kSPS;
+			 * see pwm_range note in main()):
+			 *   t = 0        PWM reads word; level 1→0; DREQ fires
+			 *   t = 0+ε      CB 8 sets SPI_DLEN  (FIFO empty; DREQ on)
+			 *   t = 0+2ε     CB 9 writes SPI_CS → SPI starts (~640 ns)
+			 *   t = 0+3ε     CB 7 writes pwm_val; level 0→1; DREQ off
+			 *   t = 0+3ε     CB 8 stalls (waits for next DREQ)
+			 *   t ≈ 640 ns   SPI complete; RX DMA stores sample
+			 *   t = 4 µs     Next period: level 1→0; DREQ fires
+			 *   Sample rate = 1 / 4 µs = 250,000 samples/sec
 			 */
 			{
 				.ti = PWM_TI,
@@ -770,6 +804,12 @@ static void print_usage(const char *prog_name)
 	printf("  -c  --create-shm       Create the shared-memory buffer and start reading\n");
 	printf("  -d, --pwm-debug        Output PWM pacing signal on GPIO12 (header pin 32)\n");
 	printf("                         GPIO12 ALT0 = PWM0_0; zero DMA overhead.\n");
+	printf("  -D N, --clock-div N    Diagnostic: divide PWM clock by N (integer ≥ 1).\n");
+	printf("                         Stretches the PWM period by N× without touching\n");
+	printf("                         pwm_range, to isolate whether 250 kSPS is a\n");
+	printf("                         hardware ceiling or a pacing-ratio issue.\n");
+	printf("                         Expected sample rate = (250 kSPS) / N.\n");
+	printf("                         Default: 1 (normal operation).\n");
 	printf("  -r, --realtime-sched   Use SCHED_FIFO for real-time scheduling\n");
 	printf("  -h, --help             Show this help message\n\n");
 	printf("Output data to 'mvaring' type ring buffer in shared memory\n");
@@ -847,18 +887,24 @@ int main(int argc, char *argv[])
 	 *
 	 *   pwm_period = pwm_range / PWM_FREQ  seconds
 	 *
-	 * Each time the FIFO drains below the DREQ threshold (set to 1 by
-	 * PWM_DMAC = PWM_DMAC_ENAB | PWM_ENAB, Table 155 DMAC p.131), the
-	 * PWM asserts its level-sensitive DREQ line (BCM2711 §4.2.1.3
-	 * "Peripheral DREQ Signals", p.61).  DMA channel A (PWM_TI =
-	 * DMA_DEST_DREQ | PERMAP=5) is stalled until DREQ is active, so it
-	 * fires once per pwm_period.  CB 9 writes SPI_CS to trigger one SPI
+	 * Each time the FIFO empties (level < threshold = 1, confirmed
+	 * empirically — see ai-gen-tests/test_pwm_dreq.c), the PWM asserts
+	 * its level-sensitive DREQ line (BCM2711 §4.2.1.3 "Peripheral DREQ
+	 * Signals", p.61).  DMA channel A (PWM_TI = DMA_DEST_DREQ |
+	 * PERMAP=5) is stalled until DREQ is active, so it fires once per
+	 * pwm_period.  CB 9 writes SPI_CS to trigger one SPI
 	 * transaction per DREQ, giving a sample rate of:
 	 *
 	 *   sample_rate = PWM_FREQ / pwm_range
 	 *
-	 * CURRENT CONFIGURATION (HI_SPEED, SAMPLE_RATE = 1,000,000):
-	 *   pwm_range = (PWM_FREQ * 2) / SAMPLE_RATE = 2
+	 * CURRENT CONFIGURATION (HI_SPEED, SAMPLE_RATE = 250,000):
+	 *   pwm_range = (PWM_FREQ * 2) / SAMPLE_RATE = 2,000,000 / 250,000 = 8
+	 *
+	 *   Actual PWM clock ≈ 2×PWM_FREQ = 2 MHz  (PLLD_per = 750 MHz, divi = 375)
+	 *   Period = pwm_range / actual_pwm_clock = 8 / 2 MHz = 4 µs  → 250 kSPS
+	 *
+	 *   SPI budget: ~980 ns (16 bits @ 25 MHz + DMA lag) << 4000 ns period.
+	 *   No dropped triggers expected.
 	 *
 	 * NOTE — empirical factor of 2:
 	 *   The factor of 2 in pwm_range is empirically required to achieve the
@@ -895,17 +941,19 @@ int main(int argc, char *argv[])
 		{"realtime-sched",	no_argument,		NULL, 'r'},
 		{"create-shm",		no_argument,		NULL, 'c'},
 		{"pwm-debug",		no_argument,		NULL, 'd'},
+		{"clock-div",		required_argument,	NULL, 'D'},
 		{"help",		no_argument,		NULL, 'h'},
 		{NULL,			0,			NULL, 0}
 	};
 	struct mvaring *mr;
 	int f, ret, opt;
 	bool create_shm = false, sched_fifo = false, pwm_debug = false;
+	uint32_t clock_div = 1;
 
 	printf("RPi ADC streamer v" VERSION "\n");
 
 	/* Parse command line arguments */
-	while ((opt = getopt_long(argc, argv, "cdhr", long_options, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "cdhD:r", long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'c':
 			create_shm = true;
@@ -913,6 +961,15 @@ int main(int argc, char *argv[])
 		case 'd':
 			pwm_debug = true;
 			break;
+		case 'D': {
+			long v = strtol(optarg, NULL, 10);
+			if (v < 1) {
+				fprintf(stderr, "--clock-div must be >= 1\n");
+				return 1;
+			}
+			clock_div = (uint32_t)v;
+			break;
+		}
 		case 'h':
 			print_usage(argv[0]);
 			return 0;
@@ -947,8 +1004,12 @@ int main(int argc, char *argv[])
 
 	printf("Streaming %u samples per block at %llu S/s, freq %d\n",
 	       MAX_SAMPS, SAMPLE_RATE, f);
+	if (clock_div > 1)
+		printf("  [--clock-div %u] PWM clock divided by %u: "
+		       "expected sample rate ~%llu S/s\n",
+		       clock_div, clock_div, SAMPLE_RATE / clock_div);
 	g_pwm_debug = pwm_debug;
-	adc_dma_init(&vc_mem, MAX_SAMPS, 0, pwm_range, pwm_debug);
+	adc_dma_init(&vc_mem, MAX_SAMPS, 0, pwm_range, pwm_debug, clock_div);
 	adc_stream_start();
 	while (1)
 		adc_stream_csv(&vc_mem, g_stream_buff, STREAM_BUFFLEN, MAX_SAMPS, mr);
