@@ -58,6 +58,7 @@ export default function ADCPlotter() {
             refVoltage={refVoltage}
             adcBits={adcBits}
             sampleRate={sampleRate}
+            streaming={streaming}
             onSlotReady={handleSlotReady}
           />
         ))}

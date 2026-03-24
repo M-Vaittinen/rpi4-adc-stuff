@@ -27,11 +27,21 @@ export function useWebSocket({
   const sampleRateRef = useRef(sampleRate);
   const slotsRef = useRef(channelSlots);
 
-  useEffect(() => { yAxisModeRef.current = yAxisMode; }, [yAxisMode]);
-  useEffect(() => { adcBitsRef.current = adcBits; }, [adcBits]);
-  useEffect(() => { refVoltageRef.current = refVoltage; }, [refVoltage]);
-  useEffect(() => { sampleRateRef.current = sampleRate; }, [sampleRate]);
-  useEffect(() => { slotsRef.current = channelSlots; }, [channelSlots]);
+  useEffect(() => {
+    yAxisModeRef.current = yAxisMode;
+  }, [yAxisMode]);
+  useEffect(() => {
+    adcBitsRef.current = adcBits;
+  }, [adcBits]);
+  useEffect(() => {
+    refVoltageRef.current = refVoltage;
+  }, [refVoltage]);
+  useEffect(() => {
+    sampleRateRef.current = sampleRate;
+  }, [sampleRate]);
+  useEffect(() => {
+    slotsRef.current = channelSlots;
+  }, [channelSlots]);
 
   useEffect(() => {
     let ws;

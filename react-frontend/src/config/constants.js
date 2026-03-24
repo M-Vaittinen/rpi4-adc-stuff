@@ -1,11 +1,15 @@
 export const WS_URL = `ws://${window.location.hostname}:8765/ws`;
+// export const WS_URL = `ws://192.168.255.1:8765/ws`;
 
-export const DEFAULT_SAMPLE_RATE = 4000;
+export const DEFAULT_SAMPLE_RATE = 100_000;
 export const DEFAULT_ADC_BITS = 16;
 export const DEFAULT_REF_VOLTAGE = 3.3;
-export const DEFAULT_Y_AXIS_MODE = "voltage";
+export const DEFAULT_Y_AXIS_MODE = "raw"; // voltage / raw
 export const MIN_ZOOM_SAMPLES = 500;
-export const MAX_TRACE_POINTS = 200_000; // ~50s at 4 kSa/s
+export const MAX_RAW_POINTS = 1_000_000; // raw sample ring-buffer (~10s at 100 kSa/s)
+export const MAX_RENDER_POINTS = 4_000; // display points after LTTB downsampling
+export const RENDER_INTERVAL_MS = 100; // downsample + render period (ms, ~10 fps)
+export const VIEW_WINDOW_S = 0.5; // seconds visible in live-follow mode
 
 // Channel definitions — add entries here to create new plots.
 // Binary data from the server is assumed interleaved: sample[i] → channel[i % N].
@@ -53,8 +57,9 @@ export function makeLayout(yAxisMode, refVoltage, adcBits) {
       minallowed: 0,
       maxallowed: yMax,
       autorange: true,
+      fixedrange: true, // y-axis is not zoomable/pannable; auto-scales with visible data
     },
     font: { family: "JetBrains Mono, Fira Code, monospace" },
-    dragmode: "pan",
+    dragmode: false,
   };
 }
