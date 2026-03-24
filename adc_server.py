@@ -1,201 +1,233 @@
-# Cherrypy Web server for WebGL data display
-# Copyright (c) Jeremy P Bentham 2021. See http://iosoft.blog for details
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-#
-# v0.01 JPB 11/1/21  First release
+"""
+ADC WebSocket + Static File Server
+------------------------------------
+Reads real ADC data from a TCP stream (rpi_data_buff_extract) and forwards
+it to the React frontend via WebSocket as binary Uint16 frames.
+Falls back to simulated data when the ADC stream is unavailable.
 
-import os, os.path, random, string, math, socket, threading, time, cherrypy
+  GET  /*         -> serves React app (react-frontend/dist/)
+  WS   /ws        -> ADC binary stream (send "start" / "stop")
 
-portnum   = 8080
-fifo_name = "/tmp/adc.fifo"
-adc_stream_host = os.environ.get("ADC_STREAM_HOST", "127.0.0.1")
-adc_stream_port = int(os.environ.get("ADC_STREAM_PORT", "9000"))
-adc_stream_timeout = float(os.environ.get("ADC_STREAM_TIMEOUT", "0.25"))
-ymax = 2.0
-npoints = 10000
-nchans = 2
-nresults = 0
-directory = os.getcwd()
+Environment variables:
+  ADC_STREAM_HOST     TCP host of rpi_data_buff_extract  (default: 127.0.0.1)
+  ADC_STREAM_PORT     TCP port of rpi_data_buff_extract  (default: 9000)
+  ADC_SERVER_PORT     Port this server listens on         (default: 8765)
+  ADC_USE_SIM         Set to "1" to force simulation mode
+
+Install:  pip install aiohttp
+Run:      python adc_server.py
+"""
+
+import asyncio
+import math
+import os
+import random
+import struct
+import logging
+from pathlib import Path
+from aiohttp import web
+
+logging.getLogger("aiohttp").setLevel(logging.ERROR)
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+ADC_STREAM_HOST = os.environ.get("ADC_STREAM_HOST", "127.0.0.1")
+ADC_STREAM_PORT = int(os.environ.get("ADC_STREAM_PORT", "9000"))
+SERVER_PORT     = int(os.environ.get("ADC_SERVER_PORT", "8765"))
+USE_SIM         = os.environ.get("ADC_USE_SIM", "").lower() in ("1", "true", "yes")
+
+# Simulation parameters (match ws_server.py defaults)
+SIM_SAMPLES_PER_BATCH = 200
+SIM_SEND_INTERVAL     = 0.05   # 50 ms
+ADC_MID               = 32768
+NOISE_AMP             = 200
+VIRTUAL_RATE          = 4000
+
+RECONNECT_DELAY = 1.0          # seconds between TCP reconnect attempts
+CONNECT_TIMEOUT = 5.0          # seconds for TCP connect timeout
+
+DIST_DIR = Path(__file__).resolve().parent / "react-frontend" / "dist"
 
 
-class AdcSocketClient(object):
-    """Line-based TCP reader with auto-reconnect for ADC samples."""
+# ── CSV-to-binary conversion ─────────────────────────────────────────────────
+def csv_to_binary(csv_line: str) -> bytes | None:
+    """Parse a CSV line of integer ADC values into little-endian Uint16 bytes."""
+    try:
+        values = [max(0, min(65535, int(v)))
+                  for v in csv_line.split(",") if v.strip()]
+        if not values:
+            return None
+        return struct.pack(f"<{len(values)}H", *values)
+    except (ValueError, struct.error):
+        return None
 
-    def __init__(self, host, port, timeout):
-        self.host = host
-        self.port = port
-        self.timeout = timeout
-        self.sock = None
-        self.reader = None
-        self.lock = threading.Lock()
-        self.last_error = ""
-        self.last_connect_ts = 0.0
-        self.latest_line = ""
-        self.lines_read = 0
-        self.reconnect_delay = 0.5
-        self.stop_evt = threading.Event()
-        self.worker = None
 
-    def _close(self):
-        if self.reader:
-            try:
-                self.reader.close()
-            except Exception:
-                pass
-            self.reader = None
-        if self.sock:
-            try:
-                self.sock.close()
-            except Exception:
-                pass
-            self.sock = None
+# ── Simulation data generator ─────────────────────────────────────────────────
+def generate_sim_batch(t_offset: float, n: int) -> bytes:
+    samples = []
+    for i in range(n):
+        t = t_offset + i / VIRTUAL_RATE
+        drift    = 5000 * math.sin(2 * math.pi * 0.05 * t)
+        periodic = 8000 * math.sin(2 * math.pi * 1.2  * t)
+        harmonic = 2000 * math.sin(2 * math.pi * 3.6  * t)
+        noise    = random.gauss(0, NOISE_AMP)
+        value    = int(ADC_MID + drift + periodic + harmonic + noise)
+        value    = max(0, min(65535, value))
+        samples.append(value)
+    return struct.pack(f"<{n}H", *samples)
 
-    def start(self):
-        if self.worker and self.worker.is_alive():
-            return
-        self.stop_evt.clear()
-        self.worker = threading.Thread(target=self._reader_loop, name="adc-socket-reader", daemon=True)
-        self.worker.start()
 
-    def stop(self):
-        self.stop_evt.set()
-        self._close()
+# ── WebSocket handler ─────────────────────────────────────────────────────────
+async def ws_handler(request):
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
 
-    def _connect(self):
-        self._close()
-        cherrypy.log("ADC socket: connecting to %s:%d" % (self.host, self.port))
-        self.sock = socket.create_connection((self.host, self.port), self.timeout)
-        self.sock.settimeout(self.timeout)
-        self.reader = self.sock.makefile("r", encoding="ascii", newline="\n")
-        self.last_connect_ts = time.time()
-        self.last_error = ""
-        cherrypy.log("ADC socket: connected")
+    streaming = False
+    task      = None
 
-    def _reader_loop(self):
-        while not self.stop_evt.is_set():
-            try:
-                if self.reader is None:
-                    self._connect()
+    async def stream_from_adc():
+        """Connect to the ADC TCP stream and forward data as binary WS frames."""
+        reader = writer = None
+        try:
+            while True:
+                # (Re)connect loop
+                if reader is None:
+                    try:
+                        reader, writer = await asyncio.wait_for(
+                            asyncio.open_connection(ADC_STREAM_HOST, ADC_STREAM_PORT),
+                            timeout=CONNECT_TIMEOUT,
+                        )
+                        print(f"[+] Connected to ADC stream {ADC_STREAM_HOST}:{ADC_STREAM_PORT}")
+                    except (OSError, asyncio.TimeoutError) as exc:
+                        print(f"[!] ADC connect failed ({exc}), retrying in {RECONNECT_DELAY}s")
+                        await asyncio.sleep(RECONNECT_DELAY)
+                        continue
 
-                line = self.reader.readline()
-                if not line:
-                    self.last_error = "stream closed by peer"
-                    cherrypy.log("ADC socket: stream closed by peer")
-                    self._close()
-                    self.stop_evt.wait(self.reconnect_delay)
+                # Read one CSV line from the ADC TCP stream
+                try:
+                    raw_line = await asyncio.wait_for(reader.readline(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    continue  # no data yet, keep reading
+
+                if not raw_line:
+                    print("[!] ADC stream closed by peer, reconnecting")
+                    if writer:
+                        writer.close()
+                    reader = writer = None
+                    await asyncio.sleep(RECONNECT_DELAY)
                     continue
 
-                line = line.strip()
-                with self.lock:
-                    self.latest_line = line
-                    self.lines_read += 1
+                data = csv_to_binary(raw_line.decode("ascii", errors="replace").strip())
+                if data:
+                    await ws.send_bytes(data)
 
-            except (OSError, ValueError) as ex:
-                self.last_error = str(ex)
-                cherrypy.log("ADC socket: read/connect failed: %s" % self.last_error)
-                self._close()
-                self.stop_evt.wait(self.reconnect_delay)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if writer:
+                writer.close()
 
-    def read_line(self):
-        with self.lock:
-            return self.latest_line
+    async def stream_sim():
+        """Generate simulated ADC data (same waveform as ws_server.py)."""
+        sample_counter = 0
+        try:
+            loop      = asyncio.get_event_loop()
+            next_send = loop.time()
+            while True:
+                t_offset = sample_counter / VIRTUAL_RATE
+                batch    = generate_sim_batch(t_offset, SIM_SAMPLES_PER_BATCH)
+                await ws.send_bytes(batch)
+                sample_counter += SIM_SAMPLES_PER_BATCH
+                next_send      += SIM_SEND_INTERVAL
+                delay = next_send - loop.time()
+                if delay > 0:
+                    await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            pass
 
-    def status(self):
-        with self.lock:
-            return {
-                "host": self.host,
-                "port": self.port,
-                "connected": self.reader is not None,
-                "last_error": self.last_error,
-                "last_connect_ts": self.last_connect_ts,
-                "lines_read": self.lines_read,
-            }
+    try:
+        async for msg in ws:
+            from aiohttp import WSMsgType
+            if msg.type != WSMsgType.TEXT:
+                continue
+
+            cmd = msg.data.strip().lower()
+
+            if cmd == "start" and not streaming:
+                streaming = True
+                if USE_SIM:
+                    task = asyncio.create_task(stream_sim())
+                    print("[>] Streaming started (simulation)")
+                else:
+                    task = asyncio.create_task(stream_from_adc())
+                    print("[>] Streaming started (ADC)")
+
+            elif cmd == "stop" and streaming:
+                streaming = False
+                if task:
+                    task.cancel()
+                    await task
+                    task = None
+                print("[x] Streaming stopped")
+
+    except Exception as exc:
+        print(f"[!] WS error: {exc}")
+    finally:
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        print("[-] Client disconnected")
+
+    return ws
 
 
-adc_socket_client = AdcSocketClient(adc_stream_host, adc_stream_port, adc_stream_timeout)
+# ── Static file / SPA handler ─────────────────────────────────────────────────
+async def static_handler(request):
+    rel_path = request.match_info.get("path", "")
+    target   = DIST_DIR / rel_path
 
-# Oscilloscope-type ADC data display
-class Grapher(object):
+    if target.is_dir():
+        target = target / "index.html"
 
-    # Index: show oscilloscope display
-    @cherrypy.expose
-    def index(self):
-        return cherrypy.lib.static.serve_file(directory + "/webgl_graph.html")
+    if target.is_file():
+        return web.FileResponse(target)
 
-    # Simulated data source
-    @cherrypy.expose
-    def sim(self):
-        global nresults
-        cherrypy.response.headers['Content-Type'] = 'text/plain'
-        data = npoints * [0]
-        for c in range(0, npoints, nchans):
-            data[c] = (math.sin((nresults*2 + c) / 20.0) + 1.2) * ymax / 4.0
-            if nchans > 1:
-                data[c+1] = (math.cos((nresults*2 + c) / 200.0) + 0.8) * data[c]
-                data[c+1] += random.random() / 4.0
-        nresults += 1
-        rsp = ",".join([("%1.3f" % d) for d in data])
-        return rsp
+    index = DIST_DIR / "index.html"
+    if index.is_file():
+        return web.FileResponse(index)
 
-    # FIFO data source
-    @cherrypy.expose
-    def fifo(self):
-        cherrypy.response.headers['Content-Type'] = 'text/plain'
-        rsp = adc_socket_client.read_line()
-        if rsp is None:
-            rsp = ""
-        return rsp
+    raise web.HTTPNotFound(text="dist/ not found. Did you run `npm run build`?")
 
-    # Socket data source (same output format as /fifo)
-    @cherrypy.expose
-    def socket(self):
-        cherrypy.response.headers['Content-Type'] = 'text/plain'
-        rsp = adc_socket_client.read_line()
-        if rsp is None:
-            rsp = ""
-        return rsp
 
-    # ADC socket source (alias used by clients)
-    @cherrypy.expose
-    def adc(self):
-        cherrypy.response.headers['Content-Type'] = 'text/plain'
-        rsp = adc_socket_client.read_line()
-        if rsp is None:
-            rsp = ""
-        return rsp
+# ── App factory ───────────────────────────────────────────────────────────────
+def make_app() -> web.Application:
+    app = web.Application()
+    app.router.add_get("/ws", ws_handler)
+    app.router.add_get("/",          static_handler)
+    app.router.add_get("/{path:.+}", static_handler)
+    return app
 
-    @cherrypy.expose
-    def health(self):
-        st = adc_socket_client.status()
-        cherrypy.response.headers['Content-Type'] = 'text/plain'
-        return (
-            "adc_host={host}\n"
-            "adc_port={port}\n"
-            "adc_connected={connected}\n"
-            "adc_last_error={last_error}\n"
-            "adc_last_connect_ts={last_connect_ts}\n"
-            "adc_lines_read={lines_read}\n"
-        ).format(**st)
 
-if __name__ == '__main__':
-    print("ADC server configured stream target %s:%d timeout=%.3fs" %
-          (adc_stream_host, adc_stream_port, adc_stream_timeout))
-    adc_socket_client.start()
-    cherrypy.engine.subscribe('stop', adc_socket_client.stop)
-    cherrypy.config.update({"server.socket_port": portnum, "server.socket_host": "0.0.0.0"})
-    conf = {
-        '/': {
-            'tools.staticdir.root': os.path.abspath(directory)
-        }
-    }
-    cherrypy.quickstart(Grapher(), '/', conf)
+async def main():
+    host, port = "0.0.0.0", SERVER_PORT
+    app    = make_app()
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host, port)
+    await site.start()
+
+    mode = "SIMULATION" if USE_SIM else f"ADC stream -> {ADC_STREAM_HOST}:{ADC_STREAM_PORT}"
+    print(f"ADC server running on http://{host}:{port}")
+    print(f"  Mode       ->  {mode}")
+    print(f"  React app  ->  http://localhost:{port}/")
+    print(f"  WebSocket  ->  ws://localhost:{port}/ws")
+    if not DIST_DIR.is_dir():
+        print(f"  Warning: '{DIST_DIR}' not found - run `npm run build` first")
+
+    await asyncio.Event().wait()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
