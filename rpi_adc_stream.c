@@ -52,18 +52,22 @@
 	#ifndef HI_SPEED
 		#error "Either HI_SPEED or LO_SPEED is required"
 	#endif
-	#define SAMPLE_RATE	 KILO(250)
-//	#define SAMPLE_RATE	 KILO(100)
+//	#define SAMPLE_RATE	 KILO(250)
+//	#define SAMPLE_RATE	 KILO(400)
+	#define SAMPLE_RATE	 KILO(500)
 	/*
-	 * SPI_FREQ for 250 kSPS:
+	 * SPI timing budget at 500 kSPS (GPIO-CE mode, no CS toggling):
 	 *
-	 * Each SPI sample requires:
-	 *   - DMA dispatch lag (CB8→CB9, DREQ→ACT): ~340 ns (measured)
-	 *   - SPI active (16 bits at SPI_FREQ): 16 / SPI_FREQ seconds
-	 *   - Total must fit within 1 PWM period (4 µs at 250 kSPS)
+	 *   PWM period  = pwm_range / actual_pwm_clock
+	 *               = 4 / 2 MHz = 2 µs
 	 *
-	 * At 25 MHz: SPI = 640 ns, total = 340+640 = 980 ns << 4000 ns
-	 *   → Substantial margin; no risk of dropped triggers at 250 kSPS.
+	 *   SPI transfer (16 bits @ 20 MHz SCLK): 800 ns
+	 *   CB8+CB9 DMA overhead (DREQ→TA):      ~100–300 ns
+	 *   Total active:                         ~900–1100 ns
+	 *   Margin:                               ~900–1100 ns
+	 *
+	 *   No CS setup/hold overhead (GPIO-CE mode; CE held LOW
+	 *   continuously — no per-transfer assertion/de-assertion).
 	 *
 	 * Note: verify the ADC's SPI clock spec before increasing frequency.
 	 */
@@ -253,9 +257,11 @@ static bool g_pwm_debug;		/* set in main(); read by terminate() */
 
 static struct shmem_info g_shm_info;
 
-// Disable SPI
+// Disable SPI and release CE0
 static void spi_disable(void)
 {
+	/* Deassert CE0 before disabling the SPI controller */
+	gpio_out(SPI0_CE0_PIN, 1);	/* CE0 inactive (high = deasserted) */
 	*REG32(spi_regs, SPI_CS) = SPI_FIFO_CLR;
 	*REG32(spi_regs, SPI_CS) = 0;
 }
@@ -485,23 +491,23 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single,
 			 *   BCM2711 Table 155, §8.6 p.131).  The BCM2711 docs do
 			 *   not state the comparison operator, but empirical
 			 *   testing (ai-gen-tests/test_pwm_dreq.c) confirmed that
-			 *   the comparison is STRICTLY "<": DREQ asserts only when
-			 *   level < threshold, i.e. only when the FIFO is empty
-			 *   (level = 0) with threshold = 1.
+			 *   the comparison is "≤" (less-than-or-equal): DREQ asserts
+			 *   when level ≤ threshold (0 or 1 with threshold = 1).
 			 *   Because DREQ is level-sensitive (§4.2.1.3, p.61), DMA
 			 *   channel A stalls here until DREQ is active.
 			 *
 			 *   This CB writes pwm_val (= 1, DATA1) to PWM_FIF1
 			 *   (BCM2711 §8.6 Table 158, p.132 — write-only FIFO
-			 *   input register at PWM base + 0x18).  One word enters
-			 *   the FIFO (level 0→1); DREQ de-asserts (1 is not < 1).
+			 *   input register at PWM base + 0x18).  In steady state,
+			 *   CB7 executes last in the CB8→CB9→CB7 sequence, when the
+			 *   FIFO is already at 1 (DREQ still asserted, 1 ≤ 1).
+			 *   CB7 raises FIFO from 1 to 2, de-asserting DREQ (2 > 1).
+			 *   CB8 then stalls until the next PWM period.
 			 *
 			 *   The PWM channel (configured in serialiser mode with
-			 *   USEF1=1, PWEN1=1 via start_pwm()) consumes that word
-			 *   in exactly pwm_range PWM-clock cycles (= pwm_range µs
-			 *   at PWM_FREQ=1 MHz).  After pwm_range µs the FIFO
-			 *   level drops again and DREQ re-asserts for the next
-			 *   cycle.
+			 *   USEF1=1, PWEN1=1 via start_pwm()) consumes one word
+			 *   every pwm_range PWM-clock cycles, lowering FIFO 2→1.
+			 *   That triggers DREQ again for the next CB8→CB9→CB7 cycle.
 			 *
 			 * Trigger rate derivation:
 			 *   f_trigger = pwm_clock / pwm_range_act
@@ -513,8 +519,8 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single,
 			 *   --pwm-debug uses the same clock/range: GPIO12 shows a
 			 *   ~50% duty cycle square wave at the same 1 MHz rate.
 			 *
-			 * This CB executes once per PWM period, setting the pace
-			 * for CBs 8 and 9 which execute in the SAME DREQ window.
+			 * This CB refills the FIFO last in the CB8→CB9→CB7 chain
+			 * (see CB9 for full steady-state description).
 			 */
 			{
 				.ti = PWM_TI,
@@ -529,16 +535,28 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single,
 			 * CB 8 — set SPI transfer length.
 			 *
 			 * Writes samp_size (= 2, i.e. 2 bytes = 16 bits) to
-			 * SPI_DLEN (BCM2711 §10 SPI, SPI0 register map, offset
+			 * SPI_DLEN (BCM2711 §9 SPI, SPI0 register map, offset
 			 * 0x0C).  This programs the SPI peripheral for exactly
 			 * one 16-bit ADC sample per triggered transaction.
 			 *
-			 * DREQ is asserted here because the FIFO is empty
-			 * (level = 0 < threshold = 1, confirmed by empirical
-			 * test — see CB 9 comment).  CB 7 from the previous
-			 * period wrote one word which PWM has since consumed.
-			 * CB 8 writes to SPI_DLEN — not to the PWM FIFO — so
-			 * the FIFO remains empty and DREQ remains asserted.
+			 * DREQ remains asserted here: in steady state the FIFO
+			 * level = 1 ≤ threshold = 1 (≤ semantics confirmed by
+			 * empirical test — see CB 9 comment).  The previous
+			 * period's CB7 left the FIFO at 2; PWM consumed a word
+			 * (level 2→1) to trigger this DREQ event.  CB8 writes
+			 * to SPI_DLEN — not to the PWM FIFO — so level stays at
+			 * 1 and DREQ remains asserted.
+			 *
+			 * WHY CB8 CANNOT BE SKIPPED:
+			 * SPI_DLEN is a down-counter during DMA transfers
+			 * (BCM2711 §9 "Peripheral generates data requests …
+			 * until the SPIDLEN has been reached", p.139).  After
+			 * DLEN bytes are transferred, the counter reaches zero
+			 * and stays there.  Writing TA=1 (CB9) with DLEN=0
+			 * triggers an immediate 0-byte "transfer": a brief SCLK
+			 * glitch (tens to hundreds of ns), no CS assertion, and
+			 * no data captured.  Therefore DLEN MUST be re-written
+			 * every sample cycle.
 			 */
 			{
 				.ti = PWM_TI,
@@ -552,15 +570,47 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single,
 			/*
 			 * CB 9 — trigger SPI transaction.
 			 *
-			 * Writes adc_csd (SPI_TFR_ACT | SPI_AUTO_CS | SPI_DMA_EN
-			 * | SPI_FIFO_CLR | ...) to SPI_CS (BCM2711 §10, offset
+			 * Writes adc_csd (SPI_TFR_ACT | SPI_DMA_EN
+			 * | SPI_FIFO_CLR | ...) to SPI_CS (BCM2711 §9, offset
 			 * 0x00), which sets the TA (Transfer Active) bit and
 			 * starts a new SPI DMA transaction of SPI_DLEN = 2 bytes.
+			 *
+			 * SPI_AUTO_CS (ADCS=1, bit 11) is set even though CE0
+			 * is driven by GPIO (GPIO-CE mode).
+			 *
+			 * CE0 (GPIO8) is in GPIO_OUT mode (not SPI ALT0), so
+			 * ADCS=1 has NO effect on the physical CE0 pin.
+			 *
+			 * WHY ADCS=1 MATTERS (despite GPIO-CE):
+			 * BCM2711 §9.5 p.139 (SPI_FIFO register, DMA mode):
+			 *   "If TA is clear, the first 32-bit write to this
+			 *    register will control SPIDLEN and SPICS."
+			 * CB 6 loops continuously and writes txd[0]=0xD0 to
+			 * SPI_FIFO whenever TX DREQ fires.  In the inter-frame
+			 * TA=0 window, 0x000000D0 is interpreted as a control
+			 * word: DLEN=0, CPOL=0, CPHA=0, TA=1 — starting a
+			 * spurious transfer with the wrong clock polarity and
+			 * flipping SCLK from HIGH to LOW.
+			 *
+			 * NOTE: BCM2711 §9.5 Table 165 defines TX DREQ purely
+			 * as "TX FIFO level ≤ TDREQ" with NO mention of TA as a
+			 * gating condition.  ADCS=1 does NOT suppress TX DREQ
+			 * during TA=0 per the spec.  ADCS=1 helps by a timing
+			 * effect: with DLEN=0 spurious frame + ADCS=1, the SPI
+			 * holds off SCLK for 3 core clock cycles (CS setup,
+			 * §9.6.4 p.141) before the first bit.  Since DLEN=0,
+			 * the frame completes within those 3 cycles before SCLK
+			 * can transition.  With ADCS=0, no such guard exists and
+			 * SCLK glitches produce phantom pulses on the analyser.
+			 * This mitigation may not be reliable at ≥1 MSPS.
+			 * See docs/spi-dma-adcs-ta-dreq-analysis.md for full
+			 * analysis and a proper fix (BCM2711 §9.6.3 pattern).
 			 *
 			 * After this write:
 			 *   - The SPI peripheral begins clocking out 16 bits on
 			 *     MOSI while capturing 16 bits on MISO from the ADC.
 			 *     At 20 MHz SPI clock the transaction takes 800 ns.
+			 *     CE0 is already LOW; no CS setup delay needed.
 			 *   - SPI RX DMA (channel B, CB 0-5) reads the received
 			 *     word from SPI_FIFO into the ping-pong data buffer
 			 *     using SPI_RX_DREQ flow control.
@@ -574,27 +624,23 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single,
 			 * BCM2711 §8.6 p.131 (Table 155, DREQ field) gives the
 			 * threshold value but not its comparison operator.
 			 * Empirical testing on RPi 4 (ai-gen-tests/test_pwm_dreq.c)
-			 * confirmed that the comparison is STRICTLY "<":
-			 *   DREQ asserts when level < threshold (= 0, when thr=1)
-			 *   DREQ de-asserts when level >= threshold (= 1 word)
+			 * confirmed that the comparison is "≤" (less-than-or-equal):
+			 *   DREQ asserts when level ≤ threshold (0 or 1 when thr=1)
+			 *   DREQ de-asserts when level > threshold (≥ 2 words)
 			 *
-			 * Note: the analogous SPI TDREQ field (§9.5 Table 165
-			 * p.139) uses "≤", but PWM behaves differently.
+			 * The analogous SPI TDREQ field (§9.5 Table 165, p.139)
+			 * also uses "≤" — semantics are consistent across these
+			 * two BCM2711 peripherals.
 			 *
-			 * Steady-state FIFO level oscillates 1→0→1→0:
-			 *   PWM reads the 1 word → level = 0 → DREQ fires.
-			 *   CB 8→9→7 execute: SPI triggered, FIFO refilled (→1).
-			 *   DREQ de-asserts; CB 8 stalls until next period.
+			 * Steady-state FIFO level oscillates 2→1→2→1:
+			 *   PWM reads 1 word; level 2→1; 1 ≤ 1 → DREQ fires.
+			 *   CB 8→9→7 execute: SPI triggered, FIFO refilled (1→2).
+			 *   2 > 1 → DREQ de-asserts; CB 8 stalls until next period.
 			 *
-			 * The PWM serialiser stalls briefly while the FIFO is
-			 * empty (BCM2711 §8.4 p.128: "channel sends continuously
-			 * as long as FIFO is not empty").  The stall lasts for
-			 * the CB 8+CB 9 DMA execution time (≪ 1 µs) and
-			 * introduces a small amount of sub-period jitter.
-			 * At 1 MSPS this has not been observed to affect sample
-			 * integrity, but for higher precision timing consider
-			 * priming with 2 words and raising DREQ threshold to 2
-			 * (see ai-gen-tests/test_pwm_dreq.c for the fix).
+			 * Because FIFO never reaches 0 in steady state, the PWM
+			 * serialiser never stalls (BCM2711 §8.4 p.128: "channel
+			 * sends continuously as long as FIFO is not empty").
+			 * No sub-period jitter from a serialiser stall.
 			 *
 			 * KEY POINT: in steady state the DMA runs CB 8→CB 9→CB 7
 			 * each period (not CB 7→8→9 as the chain order suggests).
@@ -605,16 +651,17 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single,
 			 * the full period duration for the SPI to complete.
 			 *
 			 * One complete sample cycle (actual PWM clock ≈ 2 MHz,
-			 * RNG = pwm_range = 8, period = 4 µs at 250 kSPS;
+			 * RNG = pwm_range = 4, period = 2 µs at 500 kSPS;
 			 * see pwm_range note in main()):
-			 *   t = 0        PWM reads word; level 1→0; DREQ fires
-			 *   t = 0+ε      CB 8 sets SPI_DLEN  (FIFO empty; DREQ on)
-			 *   t = 0+2ε     CB 9 writes SPI_CS → SPI starts (~640 ns)
-			 *   t = 0+3ε     CB 7 writes pwm_val; level 0→1; DREQ off
+			 *   t = 0        PWM reads word; level 2→1; DREQ fires
+			 *   t = 0+ε      CB 8 sets SPI_DLEN  (FIFO=1; DREQ on)
+			 *   t = 0+2ε     CB 9 writes SPI_CS → SPI starts (~800 ns)
+			 *                (CE0 already LOW; no CS setup overhead)
+			 *   t = 0+3ε     CB 7 writes pwm_val; level 1→2; DREQ off
 			 *   t = 0+3ε     CB 8 stalls (waits for next DREQ)
-			 *   t ≈ 640 ns   SPI complete; RX DMA stores sample
-			 *   t = 4 µs     Next period: level 1→0; DREQ fires
-			 *   Sample rate = 1 / 4 µs = 250,000 samples/sec
+			 *   t ≈ 800 ns   SPI complete; RX DMA stores sample
+			 *   t = 2 µs     Next period: level 2→1; DREQ fires
+			 *   Sample rate = 1 / 2 µs = 500,000 samples/sec
 			 */
 			{
 				.ti = PWM_TI,
@@ -648,6 +695,25 @@ static void adc_dma_init(MEM_MAP *mp, int nsamp, int single,
 // Start ADC data acquisition
 static void adc_stream_start(void)
 {
+	/*
+	 * Assert CE0 BEFORE starting PWM.
+	 *
+	 * DMA channels A/B/C are already running (started in adc_dma_init)
+	 * but stalled: channel A waits for the first PWM DREQ; B and C
+	 * wait for SPI DREQ.  The instant start_pwm() fires, the PWM
+	 * hardware asserts DREQ and the DMA immediately executes
+	 * CB7→CB8→CB9, triggering the first SPI transfer entirely in
+	 * hardware.  If CE0 were asserted after start_pwm(), the CE
+	 * gpio_out() call (userspace, several hundred ns) would almost
+	 * certainly arrive after the first SPI transfer had already
+	 * started with CE HIGH.
+	 *
+	 * By asserting CE0 here first, CE is guaranteed LOW before any
+	 * DREQ can be generated.
+	 */
+	gpio_out(SPI0_CE0_PIN, 0);	/* CE0 active (low = asserted) */
+	printf("CE0 (GPIO%d) asserted LOW — streaming active\n", SPI0_CE0_PIN);
+
 	start_pwm();
 	if (g_pwm_debug) {
 		/*
@@ -784,7 +850,23 @@ static int init_spi(int hz)
 {
 	int f, div = (SPI_CLOCK_HZ / hz + 1) & ~1;
 
-	gpio_set(SPI0_CE0_PIN, GPIO_ALT0, GPIO_NOPULL);
+	/*
+	 * CE0 (GPIO8) is driven as a plain GPIO output rather than SPI ALT0.
+	 * The ADC supports "optimized SPI mode" where CE is held LOW for the
+	 * entire acquisition: no CS toggle overhead between samples, so the
+	 * minimum inter-transfer gap is just SPI idle time (1 SCLK period =
+	 * 50 ns at 20 MHz), not the 3+1 core-cycle DMA-mode setup/hold
+	 * required when ADCS=1 (BCM2711 §9.6.4, p.141).
+	 *
+	 * CE is asserted in adc_stream_start() and deasserted in spi_disable()
+	 * so it is only low while the ADC is actually streaming.
+	 *
+	 * Initialise HIGH (inactive/deasserted) here so the pin is safe
+	 * during the period between init_spi() and adc_stream_start().
+	 */
+	gpio_set(SPI0_CE0_PIN, GPIO_OUT, GPIO_NOPULL);
+	gpio_out(SPI0_CE0_PIN, 1);	/* CE0 inactive (high = deasserted) */
+
 	gpio_set(SPI0_CE1_PIN, GPIO_ALT0, GPIO_NOPULL);
 	gpio_set(SPI0_MISO_PIN, GPIO_ALT0, GPIO_PULLUP);
 	gpio_set(SPI0_MOSI_PIN, GPIO_ALT0, GPIO_NOPULL);
@@ -887,7 +969,7 @@ int main(int argc, char *argv[])
 	 *
 	 *   pwm_period = pwm_range / PWM_FREQ  seconds
 	 *
-	 * Each time the FIFO empties (level < threshold = 1, confirmed
+	 * Each time the FIFO reaches threshold (level ≤ 1, confirmed
 	 * empirically — see ai-gen-tests/test_pwm_dreq.c), the PWM asserts
 	 * its level-sensitive DREQ line (BCM2711 §4.2.1.3 "Peripheral DREQ
 	 * Signals", p.61).  DMA channel A (PWM_TI = DMA_DEST_DREQ |
@@ -897,14 +979,14 @@ int main(int argc, char *argv[])
 	 *
 	 *   sample_rate = PWM_FREQ / pwm_range
 	 *
-	 * CURRENT CONFIGURATION (HI_SPEED, SAMPLE_RATE = 250,000):
-	 *   pwm_range = (PWM_FREQ * 2) / SAMPLE_RATE = 2,000,000 / 250,000 = 8
+	 * CURRENT CONFIGURATION (HI_SPEED, SAMPLE_RATE = 500,000, GPIO-CE):
+	 *   pwm_range = (PWM_FREQ * 2) / SAMPLE_RATE = 2,000,000 / 500,000 = 4
 	 *
 	 *   Actual PWM clock ≈ 2×PWM_FREQ = 2 MHz  (PLLD_per = 750 MHz, divi = 375)
-	 *   Period = pwm_range / actual_pwm_clock = 8 / 2 MHz = 4 µs  → 250 kSPS
+	 *   Period = pwm_range / actual_pwm_clock = 4 / 2 MHz = 2 µs  → 500 kSPS
 	 *
-	 *   SPI budget: ~980 ns (16 bits @ 25 MHz + DMA lag) << 4000 ns period.
-	 *   No dropped triggers expected.
+	 *   SPI budget: ~1100 ns (16 bits @ 20 MHz + DMA lag) < 2000 ns period.
+	 *   CE0 held LOW for entire acquisition (no per-transfer CS overhead).
 	 *
 	 * NOTE — empirical factor of 2:
 	 *   The factor of 2 in pwm_range is empirically required to achieve the

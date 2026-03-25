@@ -1,0 +1,1089 @@
+DATASHEET
+
+Raspberry Pi 4 Model B
+
+Release 1.1
+March 2024
+
+Copyright 2024 Raspberry Pi (Trading) Ltd. All rights reserved.
+
+Raspberry Pi 4 Model B Datasheet
+Copyright Raspberry Pi (Trading) Ltd. 2024
+
+Table 1: Release History
+Release
+
+Date
+
+Description
+
+1
+
+21/06/2019
+
+First release
+
+1.1
+
+12/03/2024
+
+Updated obsolescence statement and electrical specification
+
+The latest release of this document can be found at https://www.raspberrypi.org
+
+1
+
+Release 1.1
+
+Raspberry Pi 4 Model B Datasheet
+Copyright Raspberry Pi (Trading) Ltd. 2024
+
+Contents
+1
+
+Introduction
+
+5
+
+2
+
+Features
+2.1 Hardware . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+2.2 Interfaces . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+2.3 Software . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+6
+6
+6
+6
+
+3
+
+Mechanical Specification
+
+7
+
+4
+
+Electrical Specification
+4.1 Power Requirements . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+7
+8
+
+5
+
+Peripherals
+5.1 GPIO Interface . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.1.1 GPIO Pin Assignments . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.1.2 GPIO Alternate Functions . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.1.3 Display Parallel Interface (DPI) . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.1.4 SD/SDIO Interface . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.2 Camera and Display Interfaces . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.3 USB . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.4 HDMI . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.5 Audio and Composite (TV Out) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+5.6 Temperature Range and Thermals . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+9
+9
+9
+10
+11
+11
+11
+11
+11
+11
+11
+
+6
+
+Availability
+
+11
+
+7
+
+Support
+
+12
+
+2
+
+Release 1.1
+
+Raspberry Pi 4 Model B Datasheet
+Copyright Raspberry Pi (Trading) Ltd. 2024
+
+List of Figures
+1
+2
+3
+
+Mechanical Dimensions . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+Digital IO Characteristics . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+GPIO Connector Pinout . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+3
+
+7
+8
+9
+
+Release 1.1
+
+Raspberry Pi 4 Model B Datasheet
+Copyright Raspberry Pi (Trading) Ltd. 2024
+
+List of Tables
+1
+2
+3
+4
+5
+
+Release History . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 1
+Absolute Maximum Ratings . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 7
+DC Characteristics . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+Digital I/O Pin AC Characteristics . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+Raspberry Pi 4 GPIO Alternate Functions . . . . . . . . . . . . . . . . . . . . . . . . . 10
+
+4
+
+Release 1.1
+
+Raspberry Pi 4 Model B Datasheet
+Copyright Raspberry Pi (Trading) Ltd. 2024
+
+1
+
+Introduction
+
+The Raspberry Pi 4 Model B (Pi4B) is the first of a new generation of Raspberry Pi computers supporting
+more RAM and with significantly enhanced CPU, GPU and I/O performance in a similar form factor,
+power envelope and cost as the previous generation Raspberry Pi 3B+.
+The Pi4B is available with 1, 2, 4, or 8 gigabytes of LPDDR4 SDRAM.
+
+5
+
+Release 1.1
+
+Raspberry Pi 4 Model B Datasheet
+Copyright Raspberry Pi (Trading) Ltd. 2024
+
+2
+
+Features
+
+2.1
+
+Hardware
+• Quad core 64-bit ARM-Cortex A72 running at 1.5GHz
+• 1, 2 and 4 Gigabyte LPDDR4 RAM options
+• H.265 (HEVC) hardware decode (up to 4Kp60)
+• H.264 hardware decode (up to 1080p60)
+• VideoCore VI 3D Graphics
+• Supports dual HDMI display output up to 4Kp60
+
+2.2
+
+Interfaces
+• 802.11 b/g/n/ac Wireless LAN
+• Bluetooth 5.0 with BLE
+• 1x SD Card
+• 2x micro-HDMI ports supporting dual displays up to 4Kp60 resolution
+• 2x USB2 ports
+• 2x USB3 ports
+• 1x Gigabit Ethernet port (supports PoE with add-on PoE HAT)
+• 1x Raspberry Pi camera port (2-lane MIPI CSI)
+• 1x Raspberry Pi display port (2-lane MIPI DSI)
+• 28x user GPIO supporting various interface options:
+– Up to 6x UART
+– Up to 6x I2C
+– Up to 5x SPI
+– 1x SDIO interface
+– 1x DPI (Parallel RGB Display)
+– 1x PCM
+– Up to 2x PWM channels
+– Up to 3x GPCLK outputs
+
+2.3
+
+Software
+• ARMv8 Instruction Set
+• Mature Linux software stack
+• Actively developed and maintained
+
+6
+
+Release 1.1
+
+Raspberry Pi 4 Model B Datasheet
+Copyright Raspberry Pi (Trading) Ltd. 2024
+
+– Recent Linux kernel support
+– Many drivers upstreamed
+– Stable and well supported userland
+– Availability of GPU functions using standard APIs
+
+3
+
+Mechanical Specification
+
+Figure 1: Mechanical Dimensions
+
+4
+
+Electrical Specification
+
+Caution! Stresses above those listed in Table 2 may cause permanent damage to the device. This is
+a stress rating only; functional operation of the device under these or any other conditions above those
+listed in the operational sections of this specification is not implied. Exposure to absolute maximum
+rating conditions for extended periods may affect device reliability.
+Symbol
+
+Parameter
+
+Minimum
+
+Maximum
+
+Unit
+
+VIN
+
+5V Input Voltage
+
+-0.5
+
+6.0
+
+V
+
+Table 2: Absolute Maximum Ratings
+Please note that VDD IO is the GPIO bank voltage which is tied to the on-board 3.3V supply rail.
+
+7
+
+Release 1.1
+
+Raspberry Pi 4 Model B Datasheet
+Copyright Raspberry Pi (Trading) Ltd. 2024
+
+Symbol
+
+Parameter
+
+Conditions
+
+Minimum
+
+Typical
+
+Maximum
+
+Unit
+
+VIL
+
+Input low voltagea
+
+VDD IO = 3.3V
+
+0
+
+-
+
+0.8
+
+V
+
+VIH
+
+Input high voltagea
+
+VDD IO = 3.3V
+
+2.0
+
+-
+
+VDD IO
+
+V
+
+IIL
+
+Input leakage current
+
+TA = +85◦ C
+
+-
+
+-
+
+10
+
+µA
+
+CIN
+
+Input capacitance
+
+-
+
+-
+
+5
+
+-
+
+pF
+
+VOL
+
+Output low voltageb
+
+VDD IO = 3.3V, IOL = -2mA
+
+-
+
+-
+
+0.4
+
+V
+
+VOH
+
+Output high voltageb
+
+VDD IO = 3.3V, IOH = 2mA
+
+VDD IO - 0.4
+
+-
+
+-
+
+V
+
+IOL
+
+Output low currentc
+
+VDD IO = 3.3V, VO = 0.4V
+
+7
+
+-
+
+-
+
+mA
+
+IOH
+
+Output high currentc
+
+VDD IO = 3.3V, VO = 2.3V
+
+7
+
+-
+
+-
+
+mA
+
+RP U
+
+Pullup resistor
+
+-
+
+18
+
+47
+
+73
+
+kΩ
+
+RP D
+
+Pulldown resistor
+
+-
+
+18
+
+47
+
+73
+
+kΩ
+
+a Hysteresis enabled
+b Default drive strength (8mA)
+c Maximum drive strength (16mA)
+
+Table 3: DC Characteristics
+
+Pin Name
+
+Symbol
+
+Parameter
+
+Minimum
+
+Typical
+
+Maximum
+
+Unit
+
+Digital outputs
+
+trise
+
+10-90% rise timea
+
+-
+
+TBD
+
+-
+
+ns
+
+Digital outputs
+
+tf all
+
+90-10% fall timea
+
+-
+
+TBD
+
+-
+
+ns
+
+a Default drive strength, CL = 5pF, VDD IO = 3.3V
+
+Table 4: Digital I/O Pin AC Characteristics
+
+tfall
+
+trise
+
+DIGITAL
+OUTPUT
+
+Figure 2: Digital IO Characteristics
+
+4.1
+
+Power Requirements
+
+The Pi4B requires a good quality USB-C power supply capable of delivering 5V at 3A. If attached
+downstream USB devices consume less than 500mA, a 5V, 2.5A supply may be used.
+
+8
+
+Release 1.1
+
+Raspberry Pi 4 Model B Datasheet
+Copyright Raspberry Pi (Trading) Ltd. 2024
+
+5
+
+Peripherals
+
+5.1
+
+GPIO Interface
+
+The Pi4B makes 28 BCM2711 GPIOs available via a standard Raspberry Pi 40-pin header. This header
+is backwards compatible with all previous Raspberry Pi boards with a 40-way header.
+5.1.1
+
+GPIO Pin Assignments
+
+Figure 3: GPIO Connector Pinout
+As well as being able to be used as straightforward software controlled input and output (with programmable pulls), GPIO pins can be switched (multiplexed) into various other modes backed by dedicated peripheral blocks such as I2C, UART and SPI.
+In addition to the standard peripheral options found on legacy Pis, extra I2C, UART and SPI peripherals
+have been added to the BCM2711 chip and are available as further mux options on the Pi 4. This gives
+users much more flexibility when attaching add-on hardware as compared to older models.
+
+9
+
+Release 1.1
+
+Raspberry Pi 4 Model B Datasheet
+Copyright Raspberry Pi (Trading) Ltd. 2024
+
+5.1.2
+
+GPIO Alternate Functions
+
+GPIO
+
+Default
+Pull
+
+ALT0
+
+ALT1
+
+ALT2
+
+ALT3
+
+ALT4
+
+ALT5
+
+0
+
+High
+
+SDA0
+
+SA5
+
+PCLK
+
+SPI3 CE0 N
+
+TXD2
+
+SDA6
+
+1
+
+High
+
+SCL0
+
+SA4
+
+DE
+
+SPI3 MISO
+
+RXD2
+
+SCL6
+
+2
+
+High
+
+SDA1
+
+SA3
+
+LCD VSYNC
+
+SPI3 MOSI
+
+CTS2
+
+SDA3
+
+3
+
+High
+
+SCL1
+
+SA2
+
+LCD HSYNC
+
+SPI3 SCLK
+
+RTS2
+
+SCL3
+
+4
+
+High
+
+GPCLK0
+
+SA1
+
+DPI D0
+
+SPI4 CE0 N
+
+TXD3
+
+SDA3
+
+5
+
+High
+
+GPCLK1
+
+SA0
+
+DPI D1
+
+SPI4 MISO
+
+RXD3
+
+SCL3
+
+6
+
+High
+
+GPCLK2
+
+SOE N
+
+DPI D2
+
+SPI4 MOSI
+
+CTS3
+
+SDA4
+
+7
+
+High
+
+SPI0 CE1 N
+
+SWE N
+
+DPI D3
+
+SPI4 SCLK
+
+RTS3
+
+SCL4
+
+8
+
+High
+
+SPI0 CE0 N
+
+SD0
+
+DPI D4
+
+-
+
+TXD4
+
+SDA4
+
+9
+
+Low
+
+SPI0 MISO
+
+SD1
+
+DPI D5
+
+-
+
+RXD4
+
+SCL4
+
+10
+
+Low
+
+SPI0 MOSI
+
+SD2
+
+DPI D6
+
+-
+
+CTS4
+
+SDA5
+
+11
+
+Low
+
+SPI0 SCLK
+
+SD3
+
+DPI D7
+
+-
+
+RTS4
+
+SCL5
+
+12
+
+Low
+
+PWM0
+
+SD4
+
+DPI D8
+
+SPI5 CE0 N
+
+TXD5
+
+SDA5
+
+13
+
+Low
+
+PWM1
+
+SD5
+
+DPI D9
+
+SPI5 MISO
+
+RXD5
+
+SCL5
+
+14
+
+Low
+
+TXD0
+
+SD6
+
+DPI D10
+
+SPI5 MOSI
+
+CTS5
+
+TXD1
+
+15
+
+Low
+
+RXD0
+
+SD7
+
+DPI D11
+
+SPI5 SCLK
+
+RTS5
+
+RXD1
+
+16
+
+Low
+
+FL0
+
+SD8
+
+DPI D12
+
+CTS0
+
+SPI1 CE2 N
+
+CTS1
+
+17
+
+Low
+
+FL1
+
+SD9
+
+DPI D13
+
+RTS0
+
+SPI1 CE1 N
+
+RTS1
+
+18
+
+Low
+
+PCM CLK
+
+SD10
+
+DPI D14
+
+SPI6 CE0 N
+
+SPI1 CE0 N
+
+PWM0
+
+19
+
+Low
+
+PCM FS
+
+SD11
+
+DPI D15
+
+SPI6 MISO
+
+SPI1 MISO
+
+PWM1
+
+20
+
+Low
+
+PCM DIN
+
+SD12
+
+DPI D16
+
+SPI6 MOSI
+
+SPI1 MOSI
+
+GPCLK0
+
+21
+
+Low
+
+PCM DOUT
+
+SD13
+
+DPI D17
+
+SPI6 SCLK
+
+SPI1 SCLK
+
+GPCLK1
+
+22
+
+Low
+
+SD0 CLK
+
+SD14
+
+DPI D18
+
+SD1 CLK
+
+ARM TRST
+
+SDA6
+
+23
+
+Low
+
+SD0 CMD
+
+SD15
+
+DPI D19
+
+SD1 CMD
+
+ARM RTCK
+
+SCL6
+
+24
+
+Low
+
+SD0 DAT0
+
+SD16
+
+DPI D20
+
+SD1 DAT0
+
+ARM TDO
+
+SPI3 CE1 N
+
+25
+
+Low
+
+SD0 DAT1
+
+SD17
+
+DPI D21
+
+SD1 DAT1
+
+ARM TCK
+
+SPI4 CE1 N
+
+26
+
+Low
+
+SD0 DAT2
+
+TE0
+
+DPI D22
+
+SD1 DAT2
+
+ARM TDI
+
+SPI5 CE1 N
+
+27
+
+Low
+
+SD0 DAT3
+
+TE1
+
+DPI D23
+
+SD1 DAT3
+
+ARM TMS
+
+SPI6 CE1 N
+
+Table 5: Raspberry Pi 4 GPIO Alternate Functions
+Table 5 details the default pin pull state and available alternate GPIO functions. Most of these alternate
+peripheral functions are described in detail in the BCM2711 Peripherals Specification document which
+can be downloaded from the hardware documentation section of the website.
+
+10
+
+Release 1.1
+
+Raspberry Pi 4 Model B Datasheet
+Copyright Raspberry Pi (Trading) Ltd. 2024
+
+5.1.3
+
+Display Parallel Interface (DPI)
+
+A standard parallel RGB (DPI) interface is available the GPIOs. This up-to-24-bit parallel interface can
+support a secondary display.
+5.1.4
+
+SD/SDIO Interface
+
+The Pi4B has a dedicated SD card socket which supports 1.8V, DDR50 mode (at a peak bandwidth of
+50 Megabytes / sec). In addition, a legacy SDIO interface is available on the GPIO pins.
+
+5.2
+
+Camera and Display Interfaces
+
+The Pi4B has 1x Raspberry Pi 2-lane MIPI CSI Camera and 1x Raspberry Pi 2-lane MIPI DSI Display
+connector. These connectors are backwards compatible with legacy Raspberry Pi boards, and support
+all of the available Raspberry Pi camera and display peripherals.
+
+5.3
+
+USB
+
+The Pi4B has 2x USB2 and 2x USB3 type-A sockets. Downstream USB current is limited to approximately 1.1A in aggregate over the four sockets.
+
+5.4
+
+HDMI
+
+The Pi4B has 2x micro-HDMI ports, both of which support CEC and HDMI 2.0 with resolutions up to
+4Kp60.
+
+5.5
+
+Audio and Composite (TV Out)
+
+The Pi4B supports near-CD-quality analogue audio output and composite TV-output via a 4-ring TRS
+’A/V’ jack.
+The analog audio output can drive 32 Ohm headphones directly.
+
+5.6
+
+Temperature Range and Thermals
+
+The recommended ambient operating temperature range is 0 to 50 degrees Celsius.
+To reduce thermal output when idling or under light load, the Pi4B reduces the CPU clock speed and
+voltage. During heavier load the speed and voltage (and hence thermal output) are increased. The
+internal governor will throttle back both the CPU speed and voltage to make sure the CPU temperature
+never exceeds 85 degrees C.
+The Pi4B will operate perfectly well without any extra cooling and is designed for sprint performance expecting a light use case on average and ramping up the CPU speed when needed (e.g. when loading
+a webpage). If a user wishes to load the system continually or operate it at a high temperature at full
+performance, further cooling may be needed.
+
+6
+
+Availability
+
+Raspberry Pi guarantees availability of the Pi4B until at least January 2031.
+
+11
+
+Release 1.1
+
+Raspberry Pi 4 Model B Datasheet
+Copyright Raspberry Pi (Trading) Ltd. 2024
+
+7
+
+Support
+
+For support please see the hardware documentation section of the Raspberry Pi website and post questions to the Raspberry Pi forum.
+
+12
+
+Release 1.1
+
+
