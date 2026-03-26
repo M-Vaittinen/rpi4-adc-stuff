@@ -2,47 +2,34 @@ import { useState, useRef, useCallback } from "react";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { Header } from "./Header";
 import { Controls } from "./Controls";
-import { SettingsModal } from "./SettingsModal";
 import { ChannelPlot } from "./ChannelPlot";
 import { styles as s } from "../styles/theme";
 import {
-  CHANNELS,
+  PLOT0,
   DEFAULT_SAMPLE_RATE,
   DEFAULT_ADC_BITS,
-  DEFAULT_REF_VOLTAGE,
+  DEFAULT_MAX_VOLTAGE,
   DEFAULT_Y_AXIS_MODE,
 } from "../config/constants";
 
 export default function ADCPlotter() {
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [yAxisMode, setYAxisMode] = useState(DEFAULT_Y_AXIS_MODE);
+  const [maxVoltage, setMaxVoltage] = useState(DEFAULT_MAX_VOLTAGE);
   const [adcBits, setAdcBits] = useState(DEFAULT_ADC_BITS);
-  const [refVoltage, setRefVoltage] = useState(DEFAULT_REF_VOLTAGE);
   const [sampleRate, setSampleRate] = useState(DEFAULT_SAMPLE_RATE);
 
-  // Registry of per-channel buffer slots, keyed by channel id.
-  // Filled by ChannelPlot components via onSlotReady callback.
-  const slotsRef = useRef({});
-  const [slotsReady, setSlotsReady] = useState(false);
+  const slotRef = useRef(null);
+  const [slotReady, setSlotReady] = useState(false);
 
-  const handleSlotReady = useCallback((channelId, slot) => {
-    slotsRef.current[channelId] = slot;
-    if (Object.keys(slotsRef.current).length === CHANNELS.length) {
-      setSlotsReady(true);
-    }
+  const handleSlotReady = useCallback((slot) => {
+    slotRef.current = slot;
+    setSlotReady(true);
   }, []);
 
-  // Build ordered array of slots for the WebSocket hook
-  const channelSlots = slotsReady
-    ? CHANNELS.map((ch) => slotsRef.current[ch.id])
-    : [];
-
   const { status, streaming, sendCommand } = useWebSocket({
-    yAxisMode,
     adcBits,
-    refVoltage,
     sampleRate,
-    channelSlots,
+    slot: slotReady ? slotRef.current : null,
   });
 
   return (
@@ -50,18 +37,13 @@ export default function ADCPlotter() {
       <Header status={status} streaming={streaming} />
 
       <div style={s.plotContainer}>
-        {CHANNELS.map((ch) => (
-          <ChannelPlot
-            key={ch.id}
-            channel={ch}
-            yAxisMode={yAxisMode}
-            refVoltage={refVoltage}
-            adcBits={adcBits}
-            sampleRate={sampleRate}
-            streaming={streaming}
-            onSlotReady={handleSlotReady}
-          />
-        ))}
+        <ChannelPlot
+          channel={PLOT0}
+          adcBits={adcBits}
+          sampleRate={sampleRate}
+          streaming={streaming}
+          onSlotReady={handleSlotReady}
+        />
       </div>
 
       <Controls
@@ -69,22 +51,15 @@ export default function ADCPlotter() {
         status={status}
         onStart={() => sendCommand("start")}
         onStop={() => sendCommand("stop")}
-        onOpenSettings={() => setSettingsOpen(true)}
+        sampleRate={sampleRate}
+        setSampleRate={setSampleRate}
+        adcBits={adcBits}
+        setAdcBits={setAdcBits}
+        yAxisMode={yAxisMode}
+        setYAxisMode={setYAxisMode}
+        maxVoltage={maxVoltage}
+        setMaxVoltage={setMaxVoltage}
       />
-
-      {settingsOpen && (
-        <SettingsModal
-          yAxisMode={yAxisMode}
-          setYAxisMode={setYAxisMode}
-          adcBits={adcBits}
-          setAdcBits={setAdcBits}
-          sampleRate={sampleRate}
-          setSampleRate={setSampleRate}
-          refVoltage={refVoltage}
-          setRefVoltage={setRefVoltage}
-          onClose={() => setSettingsOpen(false)}
-        />
-      )}
     </div>
   );
 }

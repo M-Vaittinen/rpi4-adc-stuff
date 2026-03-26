@@ -1,114 +1,96 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { WS_URL } from "../config/constants";
 
+const RECONNECT_INTERVAL_MS = 2000;
+
 /**
  * @param {Object} opts
- * @param {string} opts.yAxisMode
  * @param {number} opts.adcBits
- * @param {number} opts.refVoltage
  * @param {number} opts.sampleRate
- * @param {Array} opts.channelSlots - one entry per channel, each with
- *   { indexRef, pendingX, pendingY, rafRef, flushToPlot, resetPlot }
+ * @param {Object|null} opts.slot - { indexRef, pendingX, pendingY, rafRef, flushToPlot, resetPlot }
  */
 export function useWebSocket({
-  yAxisMode,
   adcBits,
-  refVoltage,
   sampleRate,
-  channelSlots,
+  slot,
 }) {
   const [status, setStatus] = useState("disconnected");
   const [streaming, setStreaming] = useState(false);
 
   const wsRef = useRef(null);
-  const yAxisModeRef = useRef(yAxisMode);
   const adcBitsRef = useRef(adcBits);
-  const refVoltageRef = useRef(refVoltage);
   const sampleRateRef = useRef(sampleRate);
-  const slotsRef = useRef(channelSlots);
+  const slotRef = useRef(slot);
+  const reconnectTimerRef = useRef(null);
+
+  useEffect(() => { adcBitsRef.current = adcBits; }, [adcBits]);
+  useEffect(() => { sampleRateRef.current = sampleRate; }, [sampleRate]);
+  useEffect(() => { slotRef.current = slot; }, [slot]);
 
   useEffect(() => {
-    yAxisModeRef.current = yAxisMode;
-  }, [yAxisMode]);
-  useEffect(() => {
-    adcBitsRef.current = adcBits;
-  }, [adcBits]);
-  useEffect(() => {
-    refVoltageRef.current = refVoltage;
-  }, [refVoltage]);
-  useEffect(() => {
-    sampleRateRef.current = sampleRate;
-  }, [sampleRate]);
-  useEffect(() => {
-    slotsRef.current = channelSlots;
-  }, [channelSlots]);
-
-  useEffect(() => {
-    let ws;
     let cancelled = false;
 
-    const timer = setTimeout(() => {
+    function connect() {
       if (cancelled) return;
-      ws = new WebSocket(WS_URL);
+
+      const ws = new WebSocket(WS_URL);
       ws.binaryType = "arraybuffer";
       wsRef.current = ws;
 
-      ws.onopen = () => !cancelled && setStatus("connected");
-      ws.onclose = () => {
-        if (!cancelled) {
-          setStatus("disconnected");
-          setStreaming(false);
-        }
+      ws.onopen = () => {
+        if (cancelled) return;
+        setStatus("connected");
       };
-      ws.onerror = () => !cancelled && setStatus("error");
+
+      ws.onclose = () => {
+        if (cancelled) return;
+        setStatus("disconnected");
+        setStreaming(false);
+        console.log("trying to reconnect...");
+        reconnectTimerRef.current = setTimeout(connect, RECONNECT_INTERVAL_MS);
+      };
+
+      ws.onerror = () => {
+        if (cancelled) return;
+        setStatus("error");
+      };
 
       ws.onmessage = (e) => {
         if (cancelled) return;
         if (!(e.data instanceof ArrayBuffer)) return;
 
+        const slot = slotRef.current;
+        if (!slot) return;
+
         const raw = new Uint16Array(e.data);
-        const slots = slotsRef.current;
-        const numCh = slots.length;
         const maxAdc = adcBitsRef.current === 16 ? 65535 : 4095;
         const rate = sampleRateRef.current;
-        const isVoltage = yAxisModeRef.current === "voltage";
-        const vRef = refVoltageRef.current;
 
-        // Demux interleaved samples into per-channel buffers
-        for (let ch = 0; ch < numCh; ch++) {
-          const slot = slots[ch];
-          const startIdx = slot.indexRef.current;
-          const chSamples = [];
-          const chTimes = [];
-          let count = 0;
+        const startIdx = slot.indexRef.current;
+        let count = 0;
+        for (let i = 0; i < raw.length; i++) {
+          const t = (startIdx + count) / rate;
+          const clamped = raw[i] > maxAdc ? maxAdc : raw[i];
+          slot.pendingX.current.push(t);
+          slot.pendingY.current.push(clamped);
+          count++;
+        }
+        slot.indexRef.current = startIdx + count;
 
-          for (let i = ch; i < raw.length; i += numCh) {
-            const t = (startIdx + count) / rate;
-            const clamped = raw[i] > maxAdc ? maxAdc : raw[i];
-            const val = isVoltage ? (clamped / maxAdc) * vRef : clamped;
-            chTimes.push(t);
-            chSamples.push(val);
-            count++;
-          }
-
-          slot.indexRef.current = startIdx + count;
-          slot.pendingX.current.push(...chTimes);
-          slot.pendingY.current.push(...chSamples);
-
-          if (!slot.rafRef.current) {
-            slot.rafRef.current = requestAnimationFrame(slot.flushToPlot);
-          }
+        if (!slot.rafRef.current) {
+          slot.rafRef.current = requestAnimationFrame(slot.flushToPlot);
         }
       };
-    }, 50);
+    }
+
+    reconnectTimerRef.current = setTimeout(connect, 50);
 
     return () => {
       cancelled = true;
-      clearTimeout(timer);
-      for (const slot of slotsRef.current) {
-        if (slot.rafRef.current) cancelAnimationFrame(slot.rafRef.current);
-      }
-      if (ws) ws.close();
+      clearTimeout(reconnectTimerRef.current);
+      if (slotRef.current?.rafRef.current)
+        cancelAnimationFrame(slotRef.current.rafRef.current);
+      wsRef.current?.close();
     };
   }, []);
 
@@ -116,9 +98,7 @@ export function useWebSocket({
     if (wsRef.current?.readyState !== WebSocket.OPEN) return;
     wsRef.current.send(cmd);
     if (cmd === "start") {
-      for (const slot of slotsRef.current) {
-        slot.resetPlot();
-      }
+      slotRef.current?.resetPlot();
       setStreaming(true);
     } else {
       setStreaming(false);

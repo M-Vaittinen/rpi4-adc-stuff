@@ -4,8 +4,6 @@ import { styles as s } from "../styles/theme";
 
 export function ChannelPlot({
   channel,
-  yAxisMode,
-  refVoltage,
   adcBits,
   sampleRate,
   streaming,
@@ -22,33 +20,14 @@ export function ChannelPlot({
     resetPlot,
   } = usePlotly({
     channel,
-    yAxisMode,
-    refVoltage,
     adcBits,
     sampleRate,
     streaming,
   });
 
-  // Register this channel's buffer refs with the parent
   useEffect(() => {
-    onSlotReady(channel.id, {
-      indexRef,
-      pendingX,
-      pendingY,
-      rafRef,
-      flushToPlot,
-      resetPlot,
-    });
-  }, [
-    channel.id,
-    onSlotReady,
-    indexRef,
-    pendingX,
-    pendingY,
-    rafRef,
-    flushToPlot,
-    resetPlot,
-  ]);
+    onSlotReady({ indexRef, pendingX, pendingY, rafRef, flushToPlot, resetPlot });
+  }, [onSlotReady, indexRef, pendingX, pendingY, rafRef, flushToPlot, resetPlot]);
 
   return (
     <div style={s.channelWrap}>

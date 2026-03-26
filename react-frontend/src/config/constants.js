@@ -1,24 +1,60 @@
-export const WS_URL = `ws://${window.location.hostname}:8765/ws`;
+export const WS_URL = `ws://${window.location.hostname}:8765/ws`; // when on same device
 // export const WS_URL = `ws://192.168.255.1:8765/ws`;
 
-export const DEFAULT_SAMPLE_RATE = 100_000;
+// export const DEFAULT_SAMPLE_RATE = 100_000;
+export const DEFAULT_SAMPLE_RATE = 4000; // simulation
 export const DEFAULT_ADC_BITS = 16;
-export const DEFAULT_REF_VOLTAGE = 3.3;
+export const DEFAULT_MAX_VOLTAGE = 3.3;
 export const DEFAULT_Y_AXIS_MODE = "raw"; // voltage / raw
-export const MIN_ZOOM_SAMPLES = 500;
 export const MAX_RAW_POINTS = 1_000_000; // raw sample ring-buffer (~10s at 100 kSa/s)
 export const MAX_RENDER_POINTS = 4_000; // display points after LTTB downsampling
 export const RENDER_INTERVAL_MS = 100; // downsample + render period (ms, ~10 fps)
 export const VIEW_WINDOW_S = 0.5; // seconds visible in live-follow mode
 
-// Channel definitions — add entries here to create new plots.
-// Binary data from the server is assumed interleaved: sample[i] → channel[i % N].
-export const CHANNELS = [
-  { id: 0, name: "CH1", color: "#39ff6e" },
-  // { id: 1, name: "CH2", color: "#e06c75" },
-  // { id: 2, name: "CH3", color: "#61afef" },
-  // { id: 3, name: "CH4", color: "#e5c07b" },
-];
+export const PLOT0 = { id: 0, name: "CH1", color: "#39ff6e" };
+
+/**
+ * Compute custom tick positions and labels scaled to the best time unit
+ * for the current visible range. Returns { tickvals, ticktext, title }.
+ */
+export function computeXAxisTicks(x0, x1) {
+  const span = x1 - x0;
+
+  let factor, unit;
+  if (span < 1e-3) {
+    factor = 1e6;
+    unit = "µs";
+  } else if (span < 1) {
+    factor = 1e3;
+    unit = "ms";
+  } else {
+    factor = 1;
+    unit = "s";
+  }
+
+  const dispSpan = span * factor;
+  const rawStep = dispSpan / 6;
+  const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  const res = rawStep / mag;
+  const niceStep =
+    res <= 1.5 ? mag : res <= 3.5 ? 2 * mag : res <= 7.5 ? 5 * mag : 10 * mag;
+
+  const dispX0 = x0 * factor;
+  const dispX1 = x1 * factor;
+  const tickStart = Math.ceil(dispX0 / niceStep) * niceStep;
+
+  const decimals =
+    niceStep >= 1 ? 0 : Math.max(0, Math.ceil(-Math.log10(niceStep)));
+
+  const tickvals = [];
+  const ticktext = [];
+  for (let d = tickStart; d <= dispX1 + niceStep * 0.01; d += niceStep) {
+    tickvals.push(d / factor);
+    ticktext.push(d.toFixed(decimals) + " " + unit);
+  }
+
+  return { tickvals, ticktext, title: `Time (${unit})` };
+}
 
 export function makeTraceTemplate(color) {
   return {
@@ -28,13 +64,8 @@ export function makeTraceTemplate(color) {
   };
 }
 
-// Keep for backward compat if needed
-export const TRACE_TEMPLATE = makeTraceTemplate(CHANNELS[0].color);
-
-export function makeLayout(yAxisMode, refVoltage, adcBits) {
+export function makeLayout(adcBits) {
   const maxAdc = adcBits === 16 ? 65535 : 4095;
-  const yTitle = yAxisMode === "voltage" ? "Voltage (V)" : "Raw ADC value";
-  const yMax = yAxisMode === "voltage" ? refVoltage : maxAdc;
 
   return {
     paper_bgcolor: "rgba(0,0,0,0)",
@@ -49,15 +80,15 @@ export function makeLayout(yAxisMode, refVoltage, adcBits) {
       minallowed: 0,
     },
     yaxis: {
-      title: { text: yTitle, font: { color: "#585b70", size: 14 } },
+      title: { text: "Raw ADC value", font: { color: "#585b70", size: 14 } },
       color: "#585b70",
       gridcolor: "#1a1a2e",
       zerolinecolor: "#1a1a2e",
       tickfont: { size: 12 },
       minallowed: 0,
-      maxallowed: yMax,
+      maxallowed: maxAdc,
       autorange: true,
-      fixedrange: true, // y-axis is not zoomable/pannable; auto-scales with visible data
+      fixedrange: true,
     },
     font: { family: "JetBrains Mono, Fira Code, monospace" },
     dragmode: false,

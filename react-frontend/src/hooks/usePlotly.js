@@ -1,20 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Plotly from "plotly.js-gl2d-dist-min";
 import {
-  MIN_ZOOM_SAMPLES,
   MAX_RAW_POINTS,
   MAX_RENDER_POINTS,
   RENDER_INTERVAL_MS,
   VIEW_WINDOW_S,
   makeLayout,
   makeTraceTemplate,
+  computeXAxisTicks,
 } from "../config/constants";
 import { lttbDownsample } from "../utils/downsample";
 
 export function usePlotly({
   channel,
-  yAxisMode,
-  refVoltage,
   adcBits,
   sampleRate,
   streaming,
@@ -29,7 +27,7 @@ export function usePlotly({
   const pendingY = useRef([]);
   const rawX = useRef([]);
   const rawY = useRef([]);
-  const layoutRef = useRef(makeLayout(yAxisMode, refVoltage, adcBits));
+  const layoutRef = useRef(makeLayout(adcBits));
   const sampleRateRef = useRef(sampleRate);
   const traceTemplate = useRef(makeTraceTemplate(channel.color));
   const interactingUntil = useRef(0);
@@ -37,17 +35,31 @@ export function usePlotly({
   const streamingRef = useRef(streaming);
   const isFollowingRef = useRef(streaming); // only follow while actively streaming
   const viewRangeRef = useRef(null); // [x0, x1] of current viewport; always explicit
-  const [isFollowing, setIsFollowing] = useState(streaming);
 
   // Keep streamingRef current; enter follow when streaming starts, leave when it stops
   useEffect(() => {
     streamingRef.current = streaming;
     if (streaming) {
       isFollowingRef.current = true;
-      setIsFollowing(true);
     } else {
       isFollowingRef.current = false;
-      setIsFollowing(false);
+      // Final render: snap view to include all data up to the last sample
+      if (plotRef.current && plotInited.current && rawX.current.length > 0) {
+        const lastT = rawX.current[rawX.current.length - 1];
+        const r = plotRef.current._fullLayout?.xaxis?.range;
+        if (r) {
+          const span = r[1] - r[0];
+          const newRange = [lastT - span, lastT];
+          viewRangeRef.current = newRange;
+          const stopTicks = computeXAxisTicks(newRange[0], newRange[1]);
+          Plotly.relayout(plotRef.current, {
+            "xaxis.range": newRange,
+            "xaxis.tickvals": stopTicks.tickvals,
+            "xaxis.ticktext": stopTicks.ticktext,
+            "xaxis.title.text": stopTicks.title,
+          });
+        }
+      }
     }
   }, [streaming]);
 
@@ -57,11 +69,11 @@ export function usePlotly({
 
   // Update layout when settings change
   useEffect(() => {
-    layoutRef.current = makeLayout(yAxisMode, refVoltage, adcBits);
+    layoutRef.current = makeLayout(adcBits);
     if (plotRef.current && plotInited.current) {
       Plotly.relayout(plotRef.current, layoutRef.current);
     }
-  }, [yAxisMode, refVoltage, adcBits]);
+  }, [adcBits]);
 
   // Initialize Plotly chart
   useEffect(() => {
@@ -77,10 +89,12 @@ export function usePlotly({
           responsive: true,
           displayModeBar: false,
           scrollZoom: false,
+          doubleClick: false,
         },
       );
 
-      const MIN_X_SPAN = MIN_ZOOM_SAMPLES / sampleRateRef.current;
+      const MIN_X_SPAN = 10e-6;  // 10 µs
+      const MAX_X_SPAN = 100;    // 100 s
       const ZOOM_FACTOR = 0.15;
       const INTERACTION_COOLDOWN = 400;
 
@@ -114,9 +128,13 @@ export function usePlotly({
         const newX1 = r1 + dxS;
 
         viewRangeRef.current = [newX0, newX1];
+        const panTicks = computeXAxisTicks(newX0, newX1);
         Plotly.relayout(el, {
           "xaxis.range": [newX0, newX1],
           "xaxis.autorange": false,
+          "xaxis.tickvals": panTicks.tickvals,
+          "xaxis.ticktext": panTicks.ticktext,
+          "xaxis.title.text": panTicks.title,
         });
       });
 
@@ -148,7 +166,7 @@ export function usePlotly({
           // Leave following mode on any manual scroll
           if (isFollowingRef.current) {
             isFollowingRef.current = false;
-            setIsFollowing(false);
+
           }
 
           const xAxis = el._fullLayout?.xaxis;
@@ -167,16 +185,20 @@ export function usePlotly({
           // Zoom around the cursor (cursorX stays fixed on screen)
           const zoomingIn = e.deltaY < 0;
           const delta = zoomingIn ? -ZOOM_FACTOR : ZOOM_FACTOR;
-          const minSpan = MIN_ZOOM_SAMPLES / sampleRate;
-          const newSpan = Math.max(minSpan, span * (1 + delta));
+          const rawSpan = span * (1 + delta);
+          const newSpan = Math.max(MIN_X_SPAN, Math.min(MAX_X_SPAN, rawSpan));
 
           const newX0 = cursorX - mouseFrac * newSpan;
           const newX1 = newX0 + newSpan;
 
           viewRangeRef.current = [newX0, newX1];
+          const ticks = computeXAxisTicks(newX0, newX1);
           Plotly.relayout(el, {
             "xaxis.range": [newX0, newX1],
             "xaxis.autorange": false,
+            "xaxis.tickvals": ticks.tickvals,
+            "xaxis.ticktext": ticks.ticktext,
+            "xaxis.title.text": ticks.title,
           });
         },
         { capture: true, passive: false },
@@ -301,16 +323,27 @@ export function usePlotly({
             const latestT = rawX.current[rawX.current.length - 1];
             const liveRange = [Math.max(0, latestT - VIEW_WINDOW_S), latestT];
             viewRangeRef.current = liveRange;
+            const liveTicks = computeXAxisTicks(liveRange[0], liveRange[1]);
             layout.xaxis = {
               ...layout.xaxis,
               range: liveRange,
               autorange: false,
+              tickvals: liveTicks.tickvals,
+              ticktext: liveTicks.ticktext,
+              title: { ...layout.xaxis.title, text: liveTicks.title },
             };
           } else if (viewRangeRef.current) {
+            const viewTicks = computeXAxisTicks(
+              viewRangeRef.current[0],
+              viewRangeRef.current[1],
+            );
             layout.xaxis = {
               ...layout.xaxis,
               range: viewRangeRef.current,
               autorange: false,
+              tickvals: viewTicks.tickvals,
+              ticktext: viewTicks.ticktext,
+              title: { ...layout.xaxis.title, text: viewTicks.title },
             };
           }
           return layout;
@@ -328,7 +361,6 @@ export function usePlotly({
     pendingX.current = [];
     pendingY.current = [];
     isFollowingRef.current = true;
-    setIsFollowing(true);
     setSampleCount(0);
     if (plotRef.current) {
       Plotly.react(
@@ -337,11 +369,6 @@ export function usePlotly({
         layoutRef.current,
       );
     }
-  }, []);
-
-  const jumpToLive = useCallback(() => {
-    isFollowingRef.current = true;
-    setIsFollowing(true);
   }, []);
 
   return {
@@ -353,7 +380,5 @@ export function usePlotly({
     sampleCount,
     flushToPlot,
     resetPlot,
-    isFollowing,
-    jumpToLive,
   };
 }

@@ -74,18 +74,6 @@ export const styles = {
     alignItems: "center",
     gap: 6,
   },
-  btnJumpToLive: {
-    padding: "2px 10px",
-    border: "1px solid rgba(224, 108, 117, 0.4)",
-    borderRadius: 4,
-    background: "rgba(224, 108, 117, 0.08)",
-    color: "#e06c75",
-    fontSize: 10,
-    fontFamily: "inherit",
-    fontWeight: 700,
-    letterSpacing: 1,
-    cursor: "pointer",
-  },
   channelPlot: {
     flex: 1,
     minHeight: 0,
@@ -123,7 +111,7 @@ export const styles = {
     borderColor: "rgba(224, 108, 117, 0.3)",
     color: "#e06c75",
   },
-  btnSettings: {
+  btnNeutral: {
     background: "rgba(88, 91, 112, 0.08)",
     borderColor: "rgba(88, 91, 112, 0.3)",
     color: "#585b70",
