@@ -73,7 +73,7 @@ static const struct cmd_entry g_commands[] = {
 	{ "info",          cmd_info,
 	  "Show ring buffer metadata (version, indices, fill level)" },
 	{ "check_pattern", cmd_check_pattern,
-	  "Verify test-slave counter data: check_pattern [nostart]" },
+	  "Verify test-slave counter data: check_pattern [nostart] [bits=N]" },
 	{ "help",          cmd_help,
 	  "List available commands" },
 	{ "quit",          cmd_quit,
@@ -333,21 +333,59 @@ static inline uint16_t extract_test_val(uint32_t raw)
  *
  * The test slave device produces the following global sample sequence:
  *
- *   [0xAAAA, 0x5555,]  0x0000, 0x0001, 0x0002, ...  (wraps at 0xFFFF)
+ *   [0xAAAA, 0x5555,]  0x0000, 0x0001, 0x0002, ...
+ *
+ * The counter wraps at the bit width given by the "bits=N" argument
+ * (default 16).  For a 12-bit ADC use "bits=12" so the counter wraps
+ * at 0x0FFF → 0x0000.  The startup markers 0xAAAA/0x5555 are always
+ * full 16-bit values and are never masked.
  *
  * The optional 0xAAAA/0x5555 startup pair is present only when the slave
  * was powered-on or reset before streaming started.  Use "nostart" to
  * skip startup detection and seed the expected counter from the first
  * sample instead.
  *
- * On mismatch the expected counter is re-synced to (actual + 1) so that
- * downstream samples can still be checked independently of earlier errors.
+ * On mismatch the expected counter is re-synced to (actual + 1) & mask
+ * so that downstream samples can still be checked independently.
  *
- * Usage: check_pattern [nostart]
+ * Usage: check_pattern [nostart] [bits=N]
+ *   N defaults to 16; valid range 1–16.
  */
 static void cmd_check_pattern(const char *args)
 {
-	bool skip_startup = (args && strncmp(args, "nostart", 7) == 0);
+	bool skip_startup = false;
+	int  bits         = 16;
+
+	/* Parse arguments: accept "nostart" and/or "bits=N" in any order */
+	if (args) {
+		const char *p = args;
+
+		while (*p) {
+			while (*p == ' ') p++;
+			if (strncmp(p, "nostart", 7) == 0 &&
+			    (p[7] == '\0' || p[7] == ' ')) {
+				skip_startup = true;
+				p += 7;
+			} else if (strncmp(p, "bits=", 5) == 0) {
+				char *end;
+				long v = strtol(p + 5, &end, 10);
+
+				if (v >= 1 && v <= 16)
+					bits = (int)v;
+				else
+					out_print("check_pattern: bits must be 1–16"
+						  " (got %ld), using 16", v);
+				p = end;
+			} else {
+				/* Skip unknown token */
+				while (*p && *p != ' ') p++;
+			}
+		}
+	}
+
+	uint16_t mask = (bits == 16) ? 0xFFFF
+				     : (uint16_t)((1u << bits) - 1u);
+
 	unsigned w   = atomic_load_explicit(&g_ring->windex, memory_order_relaxed);
 	unsigned rd  = atomic_load_explicit(&g_ring->rindex, memory_order_relaxed);
 	unsigned avail = w - rd;
@@ -380,7 +418,8 @@ static void cmd_check_pattern(const char *args)
 	unsigned errors_shown = 0;
 	unsigned long total   = (unsigned long)avail * MAX_SAMPS;
 
-	out_print("--- Pattern check (%u chunks, %lu samples) ---", avail, total);
+	out_print("--- Pattern check (%u chunks, %lu samples, %d-bit counter) ---",
+		  avail, total, bits);
 
 	for (unsigned ci = 0; ci < avail; ci++) {
 		const struct adc_data *chunk = ring_chunk_at(oldest, ci);
@@ -391,13 +430,14 @@ static void cmd_check_pattern(const char *args)
 
 			/* --- Phase 1: determine counter seed --- */
 			if (!have_expected && !expect_55) {
+				/* Startup markers are always full 16-bit — no mask */
 				if (!skip_startup && val == 0xAAAA) {
 					expect_55 = true;
 					start_ci  = ci;
 					start_si  = si;
 				} else {
 					/* No startup marker; seed from first sample */
-					expected      = (uint16_t)(val + 1);
+					expected      = (uint16_t)((val + 1) & mask);
 					have_expected = true;
 				}
 				prev_bad = false;
@@ -406,6 +446,7 @@ static void cmd_check_pattern(const char *args)
 
 			if (expect_55) {
 				expect_55 = false;
+				/* 0x5555 is always full 16-bit — no mask */
 				if (val == 0x5555) {
 					startup_found = true;
 					expected      = 0x0000;
@@ -425,27 +466,29 @@ static void cmd_check_pattern(const char *args)
 				if (!prev_bad)
 					event_count++;
 				prev_bad      = true;
-				expected      = (uint16_t)(val + 1);
+				expected      = (uint16_t)((val + 1) & mask);
 				have_expected = true;
 				continue;
 			}
 
-			/* --- Phase 2: counter verification --- */
-			if (val != expected) {
+			/* --- Phase 2: counter verification (masked) --- */
+			uint16_t val_masked = val & mask;
+
+			if (val_masked != expected) {
 				if (!prev_bad)
 					event_count++;
 				if (errors_shown < MAX_ERRORS_SHOWN) {
 					out_print("  chunk %4u sample %3d:"
 						  " expected 0x%04X  got 0x%04X"
 						  "  raw 0x%08X",
-						  ci, si, expected, val, raw);
+						  ci, si, expected, val_masked, raw);
 					errors_shown++;
 				}
 				bad_count++;
-				expected = (uint16_t)(val + 1);	/* resync */
+				expected = (uint16_t)((val_masked + 1) & mask);
 				prev_bad = true;
 			} else {
-				expected++;
+				expected = (uint16_t)((expected + 1) & mask);
 				prev_bad = false;
 			}
 		}
@@ -463,6 +506,7 @@ static void cmd_check_pattern(const char *args)
 			out_print("  Startup 0xAAAA/0x5555 : not found"
 				  " (counter seeded from first sample)");
 	}
+	out_print("  Counter bits   : %d  (wraps at 0x%04X)", bits, mask);
 	out_print("  Total samples  : %lu", total);
 	out_print("  Bad  samples   : %u  (%.3f%%)",
 		  bad_count,
