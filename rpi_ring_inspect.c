@@ -41,6 +41,7 @@
 #define OUT_BUF_LINES	4096	/* scrollback line count */
 #define OUT_LINE_LEN	512	/* max chars per output line */
 #define INPUT_ROWS	2	/* rows reserved for input (below separator) */
+#define MOUSE_SCROLL_LINES 3	/* output lines scrolled per mouse-wheel notch */
 
 /* ------------------------------------------------------------------ */
 /* Forward declarations                                                 */
@@ -480,7 +481,7 @@ static void cmd_help(const char *args)
 	out_print("Available commands:");
 	for (int i = 0; g_commands[i].name; i++)
 		out_print("  %-16s  %s", g_commands[i].name, g_commands[i].help);
-	out_print("Scroll output:  PgUp / PgDn");
+	out_print("Scroll output:  PgUp / PgDn  or  mouse wheel");
 	out_print("Command history: Up / Down arrow keys");
 }
 
@@ -618,6 +619,28 @@ static void run_ui(void)
 			out_refresh();
 			sep_refresh();
 			break;
+
+		/* --- Mouse wheel scrolling --- */
+		case KEY_MOUSE: {
+			MEVENT ev;
+
+			if (getmouse(&ev) == OK) {
+				if (ev.bstate & BUTTON4_PRESSED) {
+					/* Scroll up */
+					g_out_scroll += MOUSE_SCROLL_LINES;
+					out_refresh();
+					sep_refresh();
+				} else if (ev.bstate & BUTTON5_PRESSED) {
+					/* Scroll down */
+					g_out_scroll -= MOUSE_SCROLL_LINES;
+					if (g_out_scroll < 0)
+						g_out_scroll = 0;
+					out_refresh();
+					sep_refresh();
+				}
+			}
+			break;
+		}
 
 		/* --- Command history --- */
 		case KEY_UP:
@@ -835,6 +858,9 @@ int main(int argc, char *argv[])
 		start_color();
 		use_default_colors();
 	}
+
+	/* Enable mouse wheel events (BUTTON4 = scroll up, BUTTON5 = scroll down) */
+	mousemask(BUTTON4_PRESSED | BUTTON5_PRESSED, NULL);
 
 	setup_windows();
 	run_ui();
