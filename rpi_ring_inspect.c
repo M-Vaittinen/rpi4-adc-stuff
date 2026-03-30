@@ -48,6 +48,7 @@
 
 static void cmd_ts_stats(const char *args);
 static void cmd_info(const char *args);
+static void cmd_check_pattern(const char *args);
 static void cmd_help(const char *args);
 static void cmd_quit(const char *args);
 
@@ -66,15 +67,17 @@ struct cmd_entry {
 };
 
 static const struct cmd_entry g_commands[] = {
-	{ "ts_stats", cmd_ts_stats,
+	{ "ts_stats",      cmd_ts_stats,
 	  "Avg/stddev/min/max of consecutive chunk timestamp intervals" },
-	{ "info",     cmd_info,
+	{ "info",          cmd_info,
 	  "Show ring buffer metadata (version, indices, fill level)" },
-	{ "help",     cmd_help,
+	{ "check_pattern", cmd_check_pattern,
+	  "Verify test-slave counter data: check_pattern [nostart]" },
+	{ "help",          cmd_help,
 	  "List available commands" },
-	{ "quit",     cmd_quit,
+	{ "quit",          cmd_quit,
 	  "Exit the program" },
-	{ "q",        cmd_quit,
+	{ "q",             cmd_quit,
 	  "Exit the program (alias for quit)" },
 	{ NULL, NULL, NULL }  /* sentinel */
 };
@@ -309,13 +312,174 @@ static void cmd_ts_stats(const char *args)
 		  max_diff - min_diff);
 }
 
+/*
+ * extract_test_val - recover the 16-bit test-slave counter value from a
+ * raw 32-bit DMA RX FIFO word.
+ *
+ * The BCM2711 SPI RX FIFO stores the first received byte (SPI MSB) in
+ * bits[7:0] and the second byte (SPI LSB) in bits[15:8].  Byte-swapping
+ * the lower 16 bits reconstructs the original 16-bit slave value.
+ */
+static inline uint16_t extract_test_val(uint32_t raw)
+{
+	uint16_t w = (uint16_t)raw;
+
+	return (uint16_t)((w << 8) | (w >> 8));
+}
+
+/*
+ * cmd_check_pattern - verify the test-slave incrementing counter pattern.
+ *
+ * The test slave device produces the following global sample sequence:
+ *
+ *   [0xAAAA, 0x5555,]  0x0000, 0x0001, 0x0002, ...  (wraps at 0xFFFF)
+ *
+ * The optional 0xAAAA/0x5555 startup pair is present only when the slave
+ * was powered-on or reset before streaming started.  Use "nostart" to
+ * skip startup detection and seed the expected counter from the first
+ * sample instead.
+ *
+ * On mismatch the expected counter is re-synced to (actual + 1) so that
+ * downstream samples can still be checked independently of earlier errors.
+ *
+ * Usage: check_pattern [nostart]
+ */
+static void cmd_check_pattern(const char *args)
+{
+	bool skip_startup = (args && strncmp(args, "nostart", 7) == 0);
+	unsigned w   = atomic_load_explicit(&g_ring->windex, memory_order_relaxed);
+	unsigned rd  = atomic_load_explicit(&g_ring->rindex, memory_order_relaxed);
+	unsigned avail = w - rd;
+
+	if (avail > NUM_DATA_CHUNKS)
+		avail = NUM_DATA_CHUNKS;
+
+	if (avail == 0) {
+		out_print("check_pattern: ring is empty");
+		return;
+	}
+
+	unsigned oldest = w - avail;
+
+	/* Startup-detection state */
+	bool expect_55      = false;	/* saw 0xAAAA; next must be 0x5555 */
+	bool startup_found  = false;
+	unsigned start_ci   = 0, start_si = 0;
+
+	/* Counter state */
+	bool     have_expected = skip_startup;
+	uint16_t expected      = 0;
+
+	/* Metrics */
+	uint32_t bad_count   = 0;
+	uint32_t event_count = 0;	/* transitions good→bad */
+	bool     prev_bad    = false;
+
+#define MAX_ERRORS_SHOWN 64
+	unsigned errors_shown = 0;
+	unsigned long total   = (unsigned long)avail * MAX_SAMPS;
+
+	out_print("--- Pattern check (%u chunks, %lu samples) ---", avail, total);
+
+	for (unsigned ci = 0; ci < avail; ci++) {
+		const struct adc_data *chunk = ring_chunk_at(oldest, ci);
+
+		for (int si = 0; si < MAX_SAMPS; si++) {
+			uint32_t raw = chunk->samples[si];
+			uint16_t val = extract_test_val(raw);
+
+			/* --- Phase 1: determine counter seed --- */
+			if (!have_expected && !expect_55) {
+				if (!skip_startup && val == 0xAAAA) {
+					expect_55 = true;
+					start_ci  = ci;
+					start_si  = si;
+				} else {
+					/* No startup marker; seed from first sample */
+					expected      = (uint16_t)(val + 1);
+					have_expected = true;
+				}
+				prev_bad = false;
+				continue;
+			}
+
+			if (expect_55) {
+				expect_55 = false;
+				if (val == 0x5555) {
+					startup_found = true;
+					expected      = 0x0000;
+					have_expected = true;
+					prev_bad      = false;
+					continue;
+				}
+				/* Missing 0x5555 after 0xAAAA — report and resync */
+				if (errors_shown < MAX_ERRORS_SHOWN) {
+					out_print("  chunk %4u sample %3d:"
+						  " startup: expected 0x5555 after 0xAAAA,"
+						  " got 0x%04X  raw 0x%08X",
+						  ci, si, val, raw);
+					errors_shown++;
+				}
+				bad_count++;
+				if (!prev_bad)
+					event_count++;
+				prev_bad      = true;
+				expected      = (uint16_t)(val + 1);
+				have_expected = true;
+				continue;
+			}
+
+			/* --- Phase 2: counter verification --- */
+			if (val != expected) {
+				if (!prev_bad)
+					event_count++;
+				if (errors_shown < MAX_ERRORS_SHOWN) {
+					out_print("  chunk %4u sample %3d:"
+						  " expected 0x%04X  got 0x%04X"
+						  "  raw 0x%08X",
+						  ci, si, expected, val, raw);
+					errors_shown++;
+				}
+				bad_count++;
+				expected = (uint16_t)(val + 1);	/* resync */
+				prev_bad = true;
+			} else {
+				expected++;
+				prev_bad = false;
+			}
+		}
+	}
+
+	if (errors_shown >= MAX_ERRORS_SHOWN)
+		out_print("  ... (truncated — first %u errors shown)", MAX_ERRORS_SHOWN);
+
+	out_print("--- Summary ---");
+	if (!skip_startup) {
+		if (startup_found)
+			out_print("  Startup 0xAAAA/0x5555 : found at chunk %u sample %u",
+				  start_ci, start_si);
+		else
+			out_print("  Startup 0xAAAA/0x5555 : not found"
+				  " (counter seeded from first sample)");
+	}
+	out_print("  Total samples  : %lu", total);
+	out_print("  Bad  samples   : %u  (%.3f%%)",
+		  bad_count,
+		  total > 0 ? 100.0 * bad_count / (double)total : 0.0);
+	out_print("  Good samples   : %lu  (%.3f%%)",
+		  total - bad_count,
+		  total > 0 ? 100.0 * (total - bad_count) / (double)total : 0.0);
+	out_print("  Error events   : %u  (distinct runs of bad samples)",
+		  event_count);
+}
+
 static void cmd_help(const char *args)
 {
 	(void)args;
 
 	out_print("Available commands:");
 	for (int i = 0; g_commands[i].name; i++)
-		out_print("  %-12s  %s", g_commands[i].name, g_commands[i].help);
+		out_print("  %-16s  %s", g_commands[i].name, g_commands[i].help);
 	out_print("Scroll output:  PgUp / PgDn");
 	out_print("Command history: Up / Down arrow keys");
 }
