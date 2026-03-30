@@ -49,6 +49,7 @@
 
 static void cmd_ts_stats(const char *args);
 static void cmd_info(const char *args);
+static void cmd_inspect(const char *args);
 static void cmd_check_pattern(const char *args);
 static void cmd_help(const char *args);
 static void cmd_quit(const char *args);
@@ -72,6 +73,8 @@ static const struct cmd_entry g_commands[] = {
 	  "Avg/stddev/min/max of consecutive chunk timestamp intervals" },
 	{ "info",          cmd_info,
 	  "Show ring buffer metadata (version, indices, fill level)" },
+	{ "inspect",       cmd_inspect,
+	  "Show sample data: inspect chunk=N sample=M [num=K]" },
 	{ "check_pattern", cmd_check_pattern,
 	  "Verify test-slave counter data: check_pattern [nostart] [bits=N]" },
 	{ "help",          cmd_help,
@@ -326,6 +329,120 @@ static inline uint16_t extract_test_val(uint32_t raw)
 	uint16_t w = (uint16_t)raw;
 
 	return (uint16_t)((w << 8) | (w >> 8));
+}
+
+/*
+ * cmd_inspect - show decoded sample data for a range of samples.
+ *
+ * Usage: inspect chunk=N sample=M [num=K]
+ *
+ *   chunk   logical chunk index (0 = oldest chunk in the ring)
+ *   sample  sample index within the chunk (0 … MAX_SAMPS-1)
+ *   num     number of consecutive samples to display (default 1)
+ *           the range may span chunk boundaries
+ *
+ * For each sample the output shows:
+ *   chunk / sample index, chunk timestamp (µs), raw 32-bit FIFO word,
+ *   decoded 16-bit value (byte-swapped lower half), and the upper 16
+ *   bits of the FIFO word (must be 0 for normal 16-bit SPI transfers).
+ */
+static void cmd_inspect(const char *args)
+{
+	long chunk_idx = -1, sample_idx = -1, num = 1;
+	bool chunk_set = false, sample_set = false;
+
+	/* Parse key=value tokens */
+	if (args) {
+		const char *p = args;
+
+		while (*p) {
+			while (*p == ' ') p++;
+			if (!*p) break;
+
+			char *end;
+
+			if (strncmp(p, "chunk=", 6) == 0) {
+				chunk_idx = strtol(p + 6, &end, 10);
+				chunk_set = true;
+				p = end;
+			} else if (strncmp(p, "sample=", 7) == 0) {
+				sample_idx = strtol(p + 7, &end, 10);
+				sample_set = true;
+				p = end;
+			} else if (strncmp(p, "num=", 4) == 0) {
+				num = strtol(p + 4, &end, 10);
+				p = end;
+			} else {
+				/* Skip unrecognised token */
+				while (*p && *p != ' ') p++;
+			}
+		}
+	}
+
+	if (!chunk_set || !sample_set) {
+		out_print("inspect: usage: inspect chunk=N sample=M [num=K]");
+		return;
+	}
+
+	if (num < 1) {
+		out_print("inspect: num must be >= 1");
+		return;
+	}
+
+	unsigned w     = atomic_load_explicit(&g_ring->windex, memory_order_relaxed);
+	unsigned rd    = atomic_load_explicit(&g_ring->rindex, memory_order_relaxed);
+	unsigned avail = w - rd;
+
+	if (avail > NUM_DATA_CHUNKS)
+		avail = NUM_DATA_CHUNKS;
+
+	if (avail == 0) {
+		out_print("inspect: ring is empty");
+		return;
+	}
+
+	if (chunk_idx < 0 || (unsigned long)chunk_idx >= avail) {
+		out_print("inspect: chunk %ld out of range (0 – %u)",
+			  chunk_idx, avail - 1);
+		return;
+	}
+
+	if (sample_idx < 0 || sample_idx >= MAX_SAMPS) {
+		out_print("inspect: sample %ld out of range (0 – %d)",
+			  sample_idx, MAX_SAMPS - 1);
+		return;
+	}
+
+	unsigned oldest = w - avail;
+
+	out_print("chunk   samp  timestamp(us)  raw_32bit   decoded  hi16");
+	out_print("------  ----  -------------  ----------  -------  ----");
+
+	long shown = 0;
+	long ci = chunk_idx;
+	long si = sample_idx;
+
+	while (shown < num) {
+		if (ci >= (long)avail)
+			break;
+
+		const struct adc_data *chunk = ring_chunk_at(oldest, (unsigned)ci);
+
+		for (; si < MAX_SAMPS && shown < num; si++, shown++) {
+			uint32_t raw = chunk->samples[si];
+			uint16_t decoded = extract_test_val(raw);
+			uint16_t hi16    = (uint16_t)(raw >> 16);
+
+			out_print("%6ld  %4ld  %13u  0x%08X  0x%04X   0x%04X",
+				  ci, si, chunk->usecs, raw, decoded, hi16);
+		}
+
+		ci++;
+		si = 0;
+	}
+
+	if (shown == 0)
+		out_print("inspect: no samples to display");
 }
 
 /*
