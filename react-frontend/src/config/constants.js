@@ -1,15 +1,15 @@
-export const WS_URL = `ws://${window.location.hostname}:8765/ws`; // when on same device
-// export const WS_URL = `ws://192.168.255.1:8765/ws`;
+//export const WS_URL = `ws://${window.location.hostname}:8765/ws`; // when on same device
+export const WS_URL = `ws://192.168.255.1:8765/ws`;
 
-// export const DEFAULT_SAMPLE_RATE = 100_000;
-export const DEFAULT_SAMPLE_RATE = 4000; // simulation
+export const DEFAULT_SAMPLE_RATE = 100_000;
+// export const DEFAULT_SAMPLE_RATE = 4000; // simulation
 export const DEFAULT_ADC_BITS = 16;
 export const DEFAULT_MAX_VOLTAGE = 3.3;
 export const DEFAULT_Y_AXIS_MODE = "raw"; // voltage / raw
 export const MAX_RAW_POINTS = 1_000_000; // raw sample ring-buffer (~10s at 100 kSa/s)
-export const MAX_RENDER_POINTS = 4_000; // display points after LTTB downsampling
+export const MAX_RENDER_POINTS = 250_000; // display points after LTTB downsampling
 export const RENDER_INTERVAL_MS = 100; // downsample + render period (ms, ~10 fps)
-export const VIEW_WINDOW_S = 0.5; // seconds visible in live-follow mode
+export const VIEW_WINDOW_S = 0.25; // seconds visible in live-follow mode
 
 export const PLOT0 = { id: 0, name: "CH1", color: "#39ff6e" };
 
@@ -63,6 +63,22 @@ export function makeTraceTemplate(color) {
     line: { color, width: 1 },
   };
 }
+
+export const plotlyModeBarButtonsToRemove = [
+  "zoom2d",
+  "zoomIn2d",
+  "zoomOut2d",
+  "pan2d",
+  "resetScale2d",
+  "autoScale2d",
+];
+
+export const autoScaleIcon = {
+  width: 1000,
+  height: 1000,
+  path: "m250 850l-187 0-63 0 0-62 0-188 63 0 0 188 187 0 0 62z m688 0l-188 0 0-62 188 0 0-188 62 0 0 188 0 62-62 0z m-875-938l0 188-63 0 0-188 0-62 63 0 187 0 0 62-187 0z m875 188l0-188-188 0 0-62 188 0 62 0 0 62 0 188-62 0z m-125 188l-1 0-93-94-156 156 156 156 92-93 2 0 0 250-250 0 0-2 93-92-156-156-156 156 94 92 0 2-250 0 0-250 0 0 93 93 157-156-157-156-93 94 0 0 0-250 250 0 0 0-94 93 156 157 156-157-93-93 0 0 250 0 0 250z",
+  transform: "matrix(1 0 0 -1 0 850)",
+};
 
 export function makeLayout(adcBits) {
   const maxAdc = adcBits === 16 ? 65535 : 4095;

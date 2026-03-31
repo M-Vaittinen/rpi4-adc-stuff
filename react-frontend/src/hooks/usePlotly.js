@@ -8,15 +8,12 @@ import {
   makeLayout,
   makeTraceTemplate,
   computeXAxisTicks,
+  plotlyModeBarButtonsToRemove,
+  autoScaleIcon,
 } from "../config/constants";
 import { lttbDownsample } from "../utils/downsample";
 
-export function usePlotly({
-  channel,
-  adcBits,
-  sampleRate,
-  streaming,
-}) {
+export function usePlotly({ channel, adcBits, sampleRate, streaming }) {
   const [sampleCount, setSampleCount] = useState(0);
 
   const plotRef = useRef(null);
@@ -35,6 +32,50 @@ export function usePlotly({
   const streamingRef = useRef(streaming);
   const isFollowingRef = useRef(streaming); // only follow while actively streaming
   const viewRangeRef = useRef(null); // [x0, x1] of current viewport; always explicit
+
+  const customButtons = [
+    {
+      name: "Autoscale",
+      icon: autoScaleIcon,
+      click: function (gd) {
+        const rx = rawX.current;
+        const ry = rawY.current;
+        if (rx.length === 0) return;
+
+        // Stop following — this is a manual view change
+        isFollowingRef.current = false;
+
+        // X range: all data
+        const x0 = rx[0];
+        const x1 = rx[rx.length - 1];
+        const xPad = x0 === x1 ? 0.5 : (x1 - x0) * 0.02;
+        const newX0 = Math.max(0, x0 - xPad);
+        const newX1 = x1 + xPad;
+
+        // Y range: global min/max
+        let yMin = Infinity,
+          yMax = -Infinity;
+        for (let i = 0; i < ry.length; i++) {
+          if (ry[i] < yMin) yMin = ry[i];
+          if (ry[i] > yMax) yMax = ry[i];
+        }
+        const yPad = yMin === yMax ? 1 : (yMax - yMin) * 0.08;
+
+        viewRangeRef.current = [newX0, newX1];
+        const ticks = computeXAxisTicks(newX0, newX1);
+
+        Plotly.relayout(gd, {
+          "xaxis.range": [newX0, newX1],
+          "xaxis.autorange": false,
+          "xaxis.tickvals": ticks.tickvals,
+          "xaxis.ticktext": ticks.ticktext,
+          "xaxis.title.text": ticks.title,
+          "yaxis.range": [yMin - yPad, yMax + yPad],
+          "yaxis.autorange": false,
+        });
+      },
+    },
+  ];
 
   // Keep streamingRef current; enter follow when streaming starts, leave when it stops
   useEffect(() => {
@@ -87,14 +128,17 @@ export function usePlotly({
         { ...layoutRef.current, dragmode: false }, // pan handled manually
         {
           responsive: true,
-          displayModeBar: false,
+          // displayModeBar: false,
+          modeBarButtonsToRemove: plotlyModeBarButtonsToRemove,
           scrollZoom: false,
           doubleClick: false,
+          displaylogo: false,
+          modeBarButtonsToAdd: customButtons,
         },
       );
 
-      const MIN_X_SPAN = 10e-6;  // 10 µs
-      const MAX_X_SPAN = 100;    // 100 s
+      const MIN_X_SPAN = 10e-6; // 10 µs
+      const MAX_X_SPAN = 100; // 100 s
       const ZOOM_FACTOR = 0.15;
       const INTERACTION_COOLDOWN = 400;
 
@@ -166,7 +210,6 @@ export function usePlotly({
           // Leave following mode on any manual scroll
           if (isFollowingRef.current) {
             isFollowingRef.current = false;
-
           }
 
           const xAxis = el._fullLayout?.xaxis;

@@ -14,6 +14,7 @@ export const DEFAULT_SAMPLE_RATE = 100_000;
 export const LIVE_WINDOW_SIZE = 50_000;
 export const LIVE_WINDOW_MIN = 1_000;
 export const LIVE_WINDOW_MAX = 1_000_000;
+export const LIVE_WINDOW_STEP_SIZE = 1_000;
 
 // ADC bit-depth options (value = max raw count)
 export const ADC_OPTIONS = [

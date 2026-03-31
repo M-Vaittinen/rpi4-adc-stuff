@@ -1,4 +1,4 @@
-import { useRef, useCallback, useState } from "react";
+import { useRef, useCallback, useState, type WheelEvent } from "react";
 import type { PlotData } from "./types";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { WGLPlot } from "./components/WGLPlot";
@@ -31,6 +31,7 @@ import {
   LIVE_WINDOW_SIZE,
   LIVE_WINDOW_MIN,
   LIVE_WINDOW_MAX,
+  LIVE_WINDOW_STEP_SIZE,
   ADC_OPTIONS,
 } from "@/config/constants";
 
@@ -69,8 +70,25 @@ function App() {
     onData: handleData,
   });
 
+  const handleWheel = useCallback(
+    (e: WheelEvent<HTMLDivElement>) => {
+      if (!live) return;
+
+      setWindowSize((prev) => {
+        const delta =
+          e.deltaY > 0 ? LIVE_WINDOW_STEP_SIZE : -LIVE_WINDOW_STEP_SIZE;
+        return Math.min(
+          LIVE_WINDOW_MAX,
+          Math.max(LIVE_WINDOW_MIN, prev + delta),
+        );
+      });
+    },
+    [live],
+  );
+
   function handleClear() {
     dataRef.current.count = 0;
+    dataRef.current.ys = new Float32Array(INIT_CAP);
   }
 
   return (
@@ -91,7 +109,6 @@ function App() {
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <Button
           onClick={() => {
-            handleClear();
             dataRef.current = generateSineData(5_000_000);
           }}
         >
@@ -124,6 +141,7 @@ function App() {
       </div>
 
       <WGLPlot
+        onWheel={handleWheel}
         id={"plotter"}
         dataRef={dataRef}
         style={{ flex: 1, minHeight: 0 }}
@@ -135,7 +153,11 @@ function App() {
 
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <Select defaultValue="0">
-          <SelectTrigger data-slot="input-group-control">
+          <SelectTrigger
+            className="w-32"
+            data-slot="input-group-control"
+            title="Select amount of time for plotting"
+          >
             <SelectValue placeholder="Duration" />
           </SelectTrigger>
           <SelectContent>
@@ -180,18 +202,21 @@ function App() {
           onValueChange={([v]) => setWindowSize(v)}
           min={LIVE_WINDOW_MIN}
           max={LIVE_WINDOW_MAX}
-          step={1_000}
+          step={LIVE_WINDOW_STEP_SIZE}
           disabled={!live}
           className="w-32"
         />
         <Input
-          id="samplerate"
+          id="window-size-input"
           type="number"
-          min={1000}
-          step={1_000}
+          min={LIVE_WINDOW_MIN}
+          max={LIVE_WINDOW_MAX}
+          step={LIVE_WINDOW_STEP_SIZE}
           value={[windowSize].toString()}
           disabled={!live}
-          onChange={(e) => setWindowSize(Number(e.target.value) || 1000)}
+          onChange={(e) =>
+            setWindowSize(Number(e.target.value) || LIVE_WINDOW_MIN)
+          }
           className="w-24"
         />
         <span className="w-14 text-xs text-muted-foreground">samples</span>

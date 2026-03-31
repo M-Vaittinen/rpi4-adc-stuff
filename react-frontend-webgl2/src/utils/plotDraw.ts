@@ -213,7 +213,7 @@ export function drawCrosshair(
   const tw = ctx.measureText(label).width + 14 * dpr;
   const th = fs + 10 * dpr;
   let tx = hx + 14 * dpr;
-  let ty = dataY - th / 2;
+  let ty = dataY - th;
   if (tx + tw > pl + pw) tx = hx - tw - 14 * dpr;
   ty = Math.max(pt + 2 * dpr, Math.min(pt + ph - th - 2 * dpr, ty));
 

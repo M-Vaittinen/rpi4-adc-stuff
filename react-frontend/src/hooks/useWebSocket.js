@@ -9,11 +9,7 @@ const RECONNECT_INTERVAL_MS = 2000;
  * @param {number} opts.sampleRate
  * @param {Object|null} opts.slot - { indexRef, pendingX, pendingY, rafRef, flushToPlot, resetPlot }
  */
-export function useWebSocket({
-  adcBits,
-  sampleRate,
-  slot,
-}) {
+export function useWebSocket({ adcBits, sampleRate, slot }) {
   const [status, setStatus] = useState("disconnected");
   const [streaming, setStreaming] = useState(false);
 
@@ -23,9 +19,15 @@ export function useWebSocket({
   const slotRef = useRef(slot);
   const reconnectTimerRef = useRef(null);
 
-  useEffect(() => { adcBitsRef.current = adcBits; }, [adcBits]);
-  useEffect(() => { sampleRateRef.current = sampleRate; }, [sampleRate]);
-  useEffect(() => { slotRef.current = slot; }, [slot]);
+  useEffect(() => {
+    adcBitsRef.current = adcBits;
+  }, [adcBits]);
+  useEffect(() => {
+    sampleRateRef.current = sampleRate;
+  }, [sampleRate]);
+  useEffect(() => {
+    slotRef.current = slot;
+  }, [slot]);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,13 +58,14 @@ export function useWebSocket({
       };
 
       ws.onmessage = (e) => {
+        console.log(new Uint16Array(e.data));
         if (cancelled) return;
         if (!(e.data instanceof ArrayBuffer)) return;
-
         const slot = slotRef.current;
         if (!slot) return;
 
         const raw = new Uint16Array(e.data);
+        console.log(raw);
         const maxAdc = adcBitsRef.current === 16 ? 65535 : 4095;
         const rate = sampleRateRef.current;
 

@@ -36,7 +36,7 @@ export default function ADCPlotter() {
     <div style={s.root}>
       <Header status={status} streaming={streaming} />
 
-      <div style={s.plotContainer}>
+      {/* <div style={s.plotContainer}>
         <ChannelPlot
           channel={PLOT0}
           adcBits={adcBits}
@@ -44,7 +44,7 @@ export default function ADCPlotter() {
           streaming={streaming}
           onSlotReady={handleSlotReady}
         />
-      </div>
+      </div> */}
 
       <Controls
         streaming={streaming}

@@ -16,6 +16,7 @@ interface WGLPlotProps {
   adcMax?: number;
   live?: boolean;
   windowSize?: number;
+  onWheel?: (e: React.WheelEvent<HTMLDivElement>) => void;
 }
 
 export function WGLPlot({
@@ -27,6 +28,7 @@ export function WGLPlot({
   adcMax = 65535,
   live = false,
   windowSize = 50_000,
+  onWheel,
 }: WGLPlotProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<View>({ xMin: 0, xMax: 1 });
@@ -388,6 +390,7 @@ export function WGLPlot({
       ref={wrapRef}
       className="relative w-full overflow-hidden rounded-sm bg-card"
       style={{ height, ...style }}
+      onWheel={onWheel}
     />
   );
 }
