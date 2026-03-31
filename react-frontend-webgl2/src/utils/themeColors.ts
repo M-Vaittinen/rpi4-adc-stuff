@@ -29,6 +29,7 @@ export interface ThemeColors {
   // WebGL colors (RGB 0–1 floats)
   chart1Gl: [number, number, number];
   cardGl: [number, number, number];
+  grid: string;
 }
 
 /** Read shadcn CSS custom properties from the document and resolve them. */
@@ -57,5 +58,6 @@ export function getThemeColors(): ThemeColors {
     popover90: withAlpha(popover, 0.9),
     chart1Gl: cssColorToGl(chart1),
     cardGl: cssColorToGl(card),
+    grid: withAlpha(foreground, 0.08),
   };
 }

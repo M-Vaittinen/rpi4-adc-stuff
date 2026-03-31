@@ -1,4 +1,4 @@
-export const VERT = `#version 300 es
+export const VERT = /*glsl*/ `#version 300 es
 uniform float u_xMin;
 uniform float u_xMax;
 uniform float u_yMin;
@@ -11,7 +11,7 @@ void main() {
   gl_Position = vec4(nx, ny, 0.0, 1.0);
 }`;
 
-export const FRAG = `#version 300 es
+export const FRAG = /*glsl*/ `#version 300 es
 precision mediump float;
 uniform vec3 u_color;
 out vec4 outColor;

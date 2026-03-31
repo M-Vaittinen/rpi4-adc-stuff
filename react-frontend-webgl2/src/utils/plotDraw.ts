@@ -7,6 +7,62 @@ function timeUnit(rangeS: number): [number, string] {
   return rangeS < 0.001 ? [1e6, "µs"] : rangeS < 1 ? [1e3, "ms"] : [1, "s"];
 }
 
+function niceStep(range: number, targetCount: number): number {
+  if (targetCount < 1) targetCount = 1;
+  const rough = range / targetCount;
+  const mag = Math.pow(10, Math.floor(Math.log10(rough)));
+  const norm = rough / mag;
+  const nice = norm < 1.5 ? 1 : norm < 3.5 ? 2 : norm < 7.5 ? 5 : 10;
+  return nice * mag;
+}
+
+function drawGrid(
+  ctx: CanvasRenderingContext2D,
+  W: number,
+  H: number,
+  dpr: number,
+  xMin: number,
+  xMax: number,
+  sampleRate: number,
+  colors: ThemeColors,
+): void {
+  const pl = PAD.l * dpr,
+    pb = PAD.b * dpr,
+    pt = PAD.t * dpr,
+    pr = PAD.r * dpr;
+  const pw = W - pl - pr;
+  const ph = H - pt - pb;
+
+  ctx.save();
+  ctx.strokeStyle = colors.grid;
+  ctx.lineWidth = dpr;
+  ctx.setLineDash([3 * dpr, 4 * dpr]);
+
+  // vertical lines — reuse timeUnit so steps match the axis labels' unit
+  const xRangeSec = (xMax - xMin) / sampleRate;
+  const xStep = niceStep(xRangeSec, Math.max(1, Math.floor(pw / (80 * dpr))));
+  const xStepSamples = xStep * sampleRate;
+  const xStart = Math.ceil(xMin / xStepSamples) * xStepSamples;
+  for (let xi = xStart; xi <= xMax; xi += xStepSamples) {
+    const px = pl + ((xi - xMin) / (xMax - xMin)) * pw;
+    ctx.beginPath();
+    ctx.moveTo(px, pt);
+    ctx.lineTo(px, pt + ph);
+    ctx.stroke();
+  }
+
+  // horizontal lines — match the fixed y-labels [0, 0.25, 0.5, 0.75, 1]
+  for (const f of [0, 0.25, 0.5, 0.75, 1]) {
+    const py = pt + ph * (1 - f);
+    ctx.beginPath();
+    ctx.moveTo(pl, py);
+    ctx.lineTo(pl + pw, py);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
 export function drawAxes(
   ctx: CanvasRenderingContext2D,
   W: number,
@@ -28,6 +84,8 @@ export function drawAxes(
 
   ctx.clearRect(0, 0, W, H);
   ctx.save();
+
+  drawGrid(ctx, W, H, dpr, xMin, xMax, sampleRate, colors);
 
   ctx.strokeStyle = colors.border;
   ctx.lineWidth = dpr;

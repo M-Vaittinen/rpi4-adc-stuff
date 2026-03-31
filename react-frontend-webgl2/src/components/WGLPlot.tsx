@@ -313,16 +313,18 @@ export function WGLPlot({
           const drawLast = Math.min(count - 1, Math.ceil(xMax));
           const drawCount = drawLast - drawFirst + 1;
 
-          gl.viewport(pl, pb, pw, H - pt - PAD.b * dpr);
-          gl.useProgram(prog);
-          gl.uniform1f(locs.xMin, xMin);
-          gl.uniform1f(locs.xMax, xMax);
-          gl.uniform1f(locs.yMin, 0);
-          gl.uniform1f(locs.yMax, adcMax);
-          gl.uniform3fv(locs.color, colors.chart1Gl);
-          gl.bindVertexArray(vao);
-          gl.drawArrays(gl.LINE_STRIP, drawFirst, drawCount);
-          gl.bindVertexArray(null);
+          if (drawCount > 0) {
+            gl.viewport(pl, pb, pw, H - pt - PAD.b * dpr);
+            gl.useProgram(prog);
+            gl.uniform1f(locs.xMin, xMin);
+            gl.uniform1f(locs.xMax, xMax);
+            gl.uniform1f(locs.yMin, 0);
+            gl.uniform1f(locs.yMax, adcMax);
+            gl.uniform3fv(locs.color, [57 / 255, 255 / 255, 110 / 255]);
+            gl.bindVertexArray(vao);
+            gl.drawArrays(gl.LINE_STRIP, drawFirst, drawCount);
+            gl.bindVertexArray(null);
+          }
         }
 
         drawAxes(

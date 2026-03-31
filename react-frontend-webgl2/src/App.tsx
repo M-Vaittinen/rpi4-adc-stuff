@@ -16,6 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
 import {
   PlayIcon,
   StopIcon,
@@ -74,8 +75,8 @@ function App() {
 
   return (
     <div className="flex h-screen flex-col p-4">
-      <div className="mb-2 text-xs text-muted-foreground">
-        status:{" "}
+      <div className="flex h-5 items-center gap-2 mb-2 text-xs text-muted-foreground">
+        status:
         <strong
           className={
             status === "connected" ? "text-emerald-400" : "text-orange-400"
@@ -83,7 +84,8 @@ function App() {
         >
           {status}
         </strong>
-        {" | "}streaming: <strong>{String(streaming)}</strong>
+        <Separator orientation="vertical" />
+        streaming: <strong>{String(streaming)}</strong>
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -104,11 +106,11 @@ function App() {
         </Button>
         <div className="ml-auto flex gap-2">
           <Button title="Import data" variant="outline">
-            <UploadSimpleIcon data-icon="inline-start" />
+            <DownloadSimpleIcon data-icon="inline-start" />
             Import
           </Button>
           <Button title="Export data" variant="outline">
-            <DownloadSimpleIcon data-icon="inline-start" />
+            <UploadSimpleIcon data-icon="inline-start" />
             Export
           </Button>
           <Button
@@ -132,6 +134,16 @@ function App() {
       />
 
       <div className="mt-2 flex flex-wrap items-center gap-2">
+        <Select defaultValue="0">
+          <SelectTrigger data-slot="input-group-control">
+            <SelectValue placeholder="Duration" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="0">Continuous</SelectItem>
+            <SelectItem value="1">1 second</SelectItem>
+            <SelectItem value="2">2 seconds</SelectItem>
+          </SelectContent>
+        </Select>
         <Button
           variant="green"
           title="Start streaming"
@@ -139,7 +151,6 @@ function App() {
           onClick={() => sendCommand("start")}
         >
           <PlayIcon data-icon="inline-start"></PlayIcon>
-          Start
         </Button>
         <Button
           title="Stop streaming"
@@ -147,15 +158,12 @@ function App() {
           onClick={() => sendCommand("stop")}
         >
           <StopIcon data-icon="inline-start"></StopIcon>
-          Stop
         </Button>
-        <Button
-          variant={"secondary"}
-          disabled={status != "connected"}
-          onClick={handleClear}
-        >
+        <Separator orientation="vertical" />
+        <Button variant={"secondary"} onClick={handleClear}>
           Clear
         </Button>
+        <Separator orientation="vertical" />
         <Label
           title="Lock view to the latest N samples and auto-scroll as new data arrives"
           className="gap-1.5"
@@ -176,9 +184,17 @@ function App() {
           disabled={!live}
           className="w-32"
         />
-        <span className="w-14 text-xs text-muted-foreground">
-          {(windowSize / 1000).toFixed(0)} k samples
-        </span>
+        <Input
+          id="samplerate"
+          type="number"
+          min={1000}
+          step={1_000}
+          value={[windowSize].toString()}
+          disabled={!live}
+          onChange={(e) => setWindowSize(Number(e.target.value) || 1000)}
+          className="w-24"
+        />
+        <span className="w-14 text-xs text-muted-foreground">samples</span>
         <div className="ml-auto flex items-center gap-2">
           <div
             title="Select ADC bit resolution"
@@ -202,8 +218,9 @@ function App() {
             </Select>
           </div>
           <Label className="gap-1.5">
-            sample rate (Hz)
+            sample rate (S/s)
             <Input
+              id="samplerate"
               type="number"
               min={1}
               value={sampleRate}
