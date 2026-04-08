@@ -40,21 +40,8 @@
 #define MEGA(_meg) (_meg * 1000000LLU)
 #define KILO(_kil) (_kil * 1000LLU)
 
-/* Choose either hi or lo speed. Hi for 1MSPS, Lo for 100KSPS */
-//#define LO_SPEED
-#define HI_SPEED
-
-#ifdef LO_SPEED
-	#define SAMPLE_RATE	 KILO(100)     // Default & max sample rate (samples/sec)
-	#define SPI_FREQ	MEGA(2)
-#else
-	#ifndef HI_SPEED
-		#error "Either HI_SPEED or LO_SPEED is required"
-	#endif
-	#define SAMPLE_RATE	 MEGA(1)
-//	#define SAMPLE_RATE	 KILO(100)
-	#define SPI_FREQ	MEGA(20)
-#endif
+#define SAMPLE_RATE	KILO(250)
+#define SPI_FREQ	MEGA(20)
 
 #define MAX_SAMPLE_RATE MEGA(1)
 
