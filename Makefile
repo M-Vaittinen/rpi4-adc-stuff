@@ -14,7 +14,8 @@ INSSRC=rpi_ring_inspect.c mvaring.c
 INSLDFLAGS=-lncurses -lm
 CC=gcc
 
-all: $(OUT) $(DISPOUT) $(OUT2) $(INSOUT)
+all: $(OUT) $(DISPOUT) $(OUT2)
+# $(INSOUT)
 dbg: $(OUT)_dbg $(DISPOUT)_dbg $(OUT2)_dbg $(INSOUT)_dbg
 $(OUT): $(SRC) $(HDR)
 	$(CC) $(CFLAGS) -o $(OUT) $(SRC)
