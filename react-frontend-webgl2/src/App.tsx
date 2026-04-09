@@ -50,6 +50,24 @@ function App() {
   const [sampleRate, setSampleRate] = useState(DEFAULT_SAMPLE_RATE);
   const [adcMax, setAdcMax] = useState<number>(DEFAULT_ADC_MAX);
 
+  const [elapsedMs, setElapsedMs] = useState<number | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const streamStartRef = useRef<number | null>(null);
+
+  function startTimer() {
+    streamStartRef.current = performance.now();
+    setElapsedMs(0);
+    timerRef.current = setInterval(() => {
+      setElapsedMs(performance.now() - streamStartRef.current!);
+    }, 100);
+  }
+
+  function stopTimer() {
+    if (timerRef.current !== null) clearInterval(timerRef.current);
+    if (streamStartRef.current !== null)
+      setElapsedMs(performance.now() - streamStartRef.current);
+  }
+
   const handleData = useCallback((chunk: Uint16Array) => {
     const d = dataRef.current;
     const needed = d.count + chunk.length;
@@ -104,6 +122,11 @@ function App() {
         </strong>
         <Separator orientation="vertical" />
         streaming: <strong>{String(streaming)}</strong>
+        <Separator orientation="vertical" />
+        elapsed:{" "}
+        <strong>
+          {elapsedMs === null ? "—" : (elapsedMs / 1000).toFixed(1) + " s"}
+        </strong>
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -170,14 +193,20 @@ function App() {
           variant="green"
           title="Start streaming"
           disabled={streaming || status != "connected"}
-          onClick={() => sendCommand("start")}
+          onClick={() => {
+            sendCommand("start");
+            startTimer();
+          }}
         >
           <PlayIcon data-icon="inline-start"></PlayIcon>
         </Button>
         <Button
           title="Stop streaming"
           disabled={!streaming}
-          onClick={() => sendCommand("stop")}
+          onClick={() => {
+            sendCommand("stop");
+            stopTimer();
+          }}
         >
           <StopIcon data-icon="inline-start"></StopIcon>
         </Button>

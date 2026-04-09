@@ -1,5 +1,5 @@
 //export const WS_URL = `ws://${window.location.hostname}:8765/ws`; // when on same device
-export const WS_URL = `ws://192.168.255.1:8765/ws`;
+export const WS_URL = `ws://adc-rohm2.local:8765/ws`;
 
 // CPU / GPU buffer pre-allocation
 export const INIT_CAP = 1_000_000;
