@@ -1,0 +1,4 @@
+packaging @ file:///C:/miniconda3/conda-bld/packaging_1761049099114/work
+setuptools==80.10.2
+websockets==16.0
+wheel==0.46.3
