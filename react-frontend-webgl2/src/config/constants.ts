@@ -1,5 +1,9 @@
+declare const __APP_VERSION__: string;
+export const APP_VERSION = __APP_VERSION__;
+
 //export const WS_URL = `ws://${window.location.hostname}:8765/ws`; // when on same device
 export const WS_URL = `ws://adc-rohm2.local:8765/ws`;
+export const NOT_IMPLEMENTED = true;
 
 // CPU / GPU buffer pre-allocation
 export const INIT_CAP = 1_000_000;
@@ -10,7 +14,7 @@ export const ZOOM_FACTOR = 1.15;
 export const MIN_VISIBLE = 10; // minimum samples visible when zoomed in
 
 // Streaming defaults
-export const DEFAULT_SAMPLE_RATE = 100_000;
+export const DEFAULT_SAMPLE_RATE = 200_000;
 export const LIVE_WINDOW_SIZE = 50_000;
 export const LIVE_WINDOW_MIN = 1_000;
 export const LIVE_WINDOW_MAX = 1_000_000;
