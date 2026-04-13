@@ -207,7 +207,7 @@ int main(int argc, char *argv[])
 
 	for (;;) {
 		int i;
-		/*
+
 		if (client_fd < 0) {
 			client_fd = accept(server_fd, NULL, NULL);
 			if (client_fd < 0) {
@@ -220,7 +220,6 @@ int main(int argc, char *argv[])
 			}
 			printf("ADC stream client connected\n");
 		}
-*/
 		ret = ring_read(mr, &data[0], ARRAY_SIZE(data));
 
 		if (ret == 0 || ret == -EAGAIN) {
