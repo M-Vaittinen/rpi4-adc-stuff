@@ -150,6 +150,7 @@ int main(int argc, char *argv[])
 			break;
 		case 'o':
 			g_use_old_buff = true;
+			g_keep_buffer = true;
 			break;
 		case 'p': {
 			long port = strtol(optarg, NULL, 10);
@@ -206,6 +207,7 @@ int main(int argc, char *argv[])
 
 	for (;;) {
 		int i;
+		/*
 		if (client_fd < 0) {
 			client_fd = accept(server_fd, NULL, NULL);
 			if (client_fd < 0) {
@@ -218,7 +220,7 @@ int main(int argc, char *argv[])
 			}
 			printf("ADC stream client connected\n");
 		}
-
+*/
 		ret = ring_read(mr, &data[0], ARRAY_SIZE(data));
 
 		if (ret == 0 || ret == -EAGAIN) {
