@@ -239,7 +239,7 @@ int main(int argc, char *argv[])
 				goto out;
 			}
 			*/
-			if (send_all(client_fd, &data[i], sizeof(data[i])) < 0) {	
+			if (send_all(client_fd, (char *)&data[i], sizeof(data[i])) < 0) {	
 				close(client_fd);
 				client_fd = -1;
 				printf("ADC stream client disconnected\n");
