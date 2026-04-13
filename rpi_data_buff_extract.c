@@ -253,13 +253,13 @@ int main(int argc, char *argv[])
 		ret = -server_fd;
 		fprintf(stderr, "Failed to create stream socket on port %u: %s\n",
 			g_stream_port, strerror(ret));
-		printf("Ou1\n");
 		goto out;
 	}
 
 	printf("ADC stream socket listening on port %u\n", g_stream_port);
 
 	for (;;) {
+		int i;
 		if (client_fd < 0) {
 			client_fd = accept(server_fd, NULL, NULL);
 			if (client_fd < 0) {
@@ -273,42 +273,32 @@ int main(int argc, char *argv[])
 			printf("ADC stream client connected\n");
 		}
 
-		if (!mr || !ring_is_ok(mr)) {			
-			fprintf(stderr, "Ring not ready, waiting for producer...\n");
-			shmem_close_and_reset(&in);
-			ret = open_existing_shm_wait(&in, &mr);
-			if (ret){
-				printf("Ou3\n");
-				goto out;
-			}
-			continue;
-		}
+		ret = ring_read(mr, &data[0], ARRAY_SIZE(data));
 
-		ret = ring_read(mr, &data[0], ARRAY_SIZE(data));		
 		if (ret == 0 || ret == -EAGAIN) {
-			usleep(1000);			
+			usleep(1000);
 			continue;
 		}
 		if (ret < 0) {
-			printf("Here4\n");
 			fprintf(stderr, "ring_read error %d, retrying\n", ret);
 			usleep(10000);
 			continue;
 		}
 
-		for (int i = 0; i < ret; i++) {			
-			ssize_t line_len = format_adc_csv(&data[i], g_stream_line, sizeof(g_stream_line));			
-			if (line_len < 0) {				
+		for (i = 0; i < ret; i++) {
+/*			ssize_t line_len = format_adc_csv(&data[i], g_stream_line, sizeof(g_stream_line));
+			if (line_len < 0) {
 				fprintf(stderr, "Failed to format ADC stream line\n");
-				ret = EOVERFLOW;				
+				ret = EOVERFLOW;
 				goto out;
-			}			
-			if (send_all(client_fd, g_stream_line, (size_t)line_len) < 0) {				
+			}
+			*/
+			if (send_all(client_fd, &data[i], sizeof(data[i])) < 0) {	
 				close(client_fd);
 				client_fd = -1;
 				printf("ADC stream client disconnected\n");
-				break;				
-			}			
+				break;
+			}
 		}
 	}
 
