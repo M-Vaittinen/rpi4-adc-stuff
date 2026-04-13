@@ -5,5 +5,6 @@
 #include "rpi_shmem.h"
 
 int rpi_shm_create(struct shmem_info *shi, struct mvaring **mr);
+int open_existing_shm_wait(struct shmem_info *shi, struct mvaring **mr);
 
 #endif
