@@ -56,7 +56,7 @@ function App() {
   const [sampleRate, setSampleRate] = useState(DEFAULT_SAMPLE_RATE);
   const [adcMax, setAdcMax] = useState<number>(DEFAULT_ADC_MAX);
 
-  const [elapsedMs, setElapsedMs] = useState<number | null>(null);
+  const [elapsedMs, _setElapsedMs] = useState<number | null>(null);
   // const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // const streamStartRef = useRef<number | null>(null);
 

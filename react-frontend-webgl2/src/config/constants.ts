@@ -1,8 +1,8 @@
 declare const __APP_VERSION__: string;
 export const APP_VERSION = __APP_VERSION__;
 
-//export const WS_URL = `ws://${window.location.hostname}:8765/ws`; // when on same device
-export const WS_URL = `ws://adc-rohm2.local:8765/ws`;
+export const WS_URL = `ws://${window.location.hostname}:8765/ws`; // when on same device
+//export const WS_URL = `ws://adc-rohm2.local:8765/ws`;
 export const NOT_IMPLEMENTED = true;
 
 // mvaring chunk layout (must match struct adc_data in C code)
