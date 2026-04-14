@@ -105,6 +105,7 @@ export function WGLPlot({
 
     const locs = {
       a_y: gl.getAttribLocation(prog, "a_y"),
+      iOffset: gl.getUniformLocation(prog, "u_iOffset"),
       xMin: gl.getUniformLocation(prog, "u_xMin"),
       xMax: gl.getUniformLocation(prog, "u_xMax"),
       yMin: gl.getUniformLocation(prog, "u_yMin"),
@@ -318,8 +319,9 @@ export function WGLPlot({
           if (drawCount > 0) {
             gl.viewport(pl, pb, pw, H - pt - PAD.b * dpr);
             gl.useProgram(prog);
-            gl.uniform1f(locs.xMin, xMin);
-            gl.uniform1f(locs.xMax, xMax);
+            gl.uniform1i(locs.iOffset, drawFirst);
+            gl.uniform1f(locs.xMin, xMin - drawFirst);
+            gl.uniform1f(locs.xMax, xMax - drawFirst);
             gl.uniform1f(locs.yMin, 0);
             gl.uniform1f(locs.yMax, adcMax);
             gl.uniform3fv(locs.color, [57 / 255, 255 / 255, 110 / 255]);
@@ -340,6 +342,8 @@ export function WGLPlot({
           sampleRate,
           adcMax,
           colors,
+          dataRef.current.chunkUsecs,
+          dataRef.current.chunkCount,
         );
       }
 
@@ -357,6 +361,8 @@ export function WGLPlot({
           sampleRate,
           adcMax,
           colors,
+          dataRef.current.chunkUsecs,
+          dataRef.current.chunkCount,
         );
       }
 

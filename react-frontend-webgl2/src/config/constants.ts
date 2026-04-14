@@ -5,6 +5,10 @@ export const APP_VERSION = __APP_VERSION__;
 export const WS_URL = `ws://adc-rohm2.local:8765/ws`;
 export const NOT_IMPLEMENTED = true;
 
+// mvaring chunk layout (must match struct adc_data in C code)
+export const MAX_SAMPS = 1024;
+export const CHUNK_BYTES = 4 + MAX_SAMPS * 4 + MAX_SAMPS * 4;
+
 // CPU / GPU buffer pre-allocation
 export const INIT_CAP = 1_000_000;
 export const INIT_GPU_CAP = 1_000_000;
@@ -26,4 +30,4 @@ export const ADC_OPTIONS = [
   { label: "12-bit", value: 4095 },
   { label: "11-bit", value: 2047 },
 ] as const;
-export const DEFAULT_ADC_MAX = ADC_OPTIONS[0].value;
+export const DEFAULT_ADC_MAX = ADC_OPTIONS[2].value;

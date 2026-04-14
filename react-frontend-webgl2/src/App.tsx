@@ -1,9 +1,9 @@
 import { useRef, useCallback, useState, type WheelEvent } from "react";
 import type { PlotData } from "./types";
-import { useWebSocket } from "./hooks/useWebSocket";
+import { useWebSocket, type ParsedFrame } from "./hooks/useWebSocket";
 import { WGLPlot } from "./components/WGLPlot";
 import { StatusDot } from "./components/StatusDot";
-// import { generateSineData } from "./utils/sineData";
+import { generateSineData } from "./utils/sineData";
 import { saveCanvasesAsImage } from "./utils/saveImage";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -27,6 +27,7 @@ import {
 } from "@phosphor-icons/react";
 import {
   INIT_CAP,
+  MAX_SAMPS,
   DEFAULT_SAMPLE_RATE,
   DEFAULT_ADC_MAX,
   LIVE_WINDOW_SIZE,
@@ -46,6 +47,8 @@ function App() {
   const dataRef = useRef<PlotData>({
     ys: new Float32Array(INIT_CAP),
     count: 0,
+    chunkUsecs: new Float64Array(Math.ceil(INIT_CAP / MAX_SAMPS)),
+    chunkCount: 0,
   });
 
   const [live, setLive] = useState(false);
@@ -53,7 +56,7 @@ function App() {
   const [sampleRate, setSampleRate] = useState(DEFAULT_SAMPLE_RATE);
   const [adcMax, setAdcMax] = useState<number>(DEFAULT_ADC_MAX);
 
-  // const [elapsedMs, setElapsedMs] = useState<number | null>(null);
+  const [elapsedMs, setElapsedMs] = useState<number | null>(null);
   // const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // const streamStartRef = useRef<number | null>(null);
 
@@ -71,8 +74,9 @@ function App() {
   //     setElapsedMs(performance.now() - streamStartRef.current);
   // }
 
-  const handleData = useCallback((chunk: Uint16Array) => {
+  const handleData = useCallback((frame: ParsedFrame) => {
     const d = dataRef.current;
+    const chunk = frame.samples;
     const needed = d.count + chunk.length;
 
     if (needed > d.ys.length) {
@@ -82,9 +86,21 @@ function App() {
       d.ys = grown;
     }
 
-    // Uint16 → Float32 conversion is implicit and lossless
     d.ys.set(chunk, d.count);
     d.count += chunk.length;
+
+    // Append chunk timestamps
+    const newChunkCount = d.chunkCount + frame.chunkUsecs.length;
+    if (newChunkCount > d.chunkUsecs.length) {
+      const newCap = Math.max(newChunkCount * 2, d.chunkUsecs.length * 2);
+      const grown = new Float64Array(newCap);
+      grown.set(d.chunkUsecs.subarray(0, d.chunkCount));
+      d.chunkUsecs = grown;
+    }
+    for (let i = 0; i < frame.chunkUsecs.length; i++) {
+      d.chunkUsecs[d.chunkCount + i] = frame.chunkUsecs[i];
+    }
+    d.chunkCount = newChunkCount;
   }, []);
 
   const { status, streaming, sendCommand } = useWebSocket({
@@ -110,6 +126,10 @@ function App() {
   function handleClear() {
     dataRef.current.count = 0;
     dataRef.current.ys = new Float32Array(INIT_CAP);
+    dataRef.current.chunkCount = 0;
+    dataRef.current.chunkUsecs = new Float64Array(
+      Math.ceil(INIT_CAP / MAX_SAMPS),
+    );
   }
 
   return (
@@ -126,11 +146,11 @@ function App() {
         >
           {status}
         </strong>
-        {/* <Separator orientation="vertical" />
+        <Separator orientation="vertical" />
         elapsed:{" "}
         <strong>
           {elapsedMs === null ? "—" : (elapsedMs / 1000).toFixed(1) + " s"}
-        </strong> 
+        </strong>
         <Button
           onClick={() => {
             dataRef.current = generateSineData(5_000_000);
@@ -144,7 +164,7 @@ function App() {
           }}
         >
           Sine 10M
-        </Button>*/}
+        </Button>
         <div className="ml-auto flex gap-2">
           <span title="Not yet implemented">
             <Button variant="outline" disabled>

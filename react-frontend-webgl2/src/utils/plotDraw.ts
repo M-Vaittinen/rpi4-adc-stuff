@@ -1,10 +1,62 @@
 import type { View, HoverPhys } from "../types";
 import type { ThemeColors } from "./themeColors";
+import { MAX_SAMPS } from "../config/constants";
 
 export const PAD = { l: 62, b: 34, t: 10, r: 12 } as const;
 
-function timeUnit(rangeS: number): [number, string] {
-  return rangeS < 0.001 ? [1e6, "µs"] : rangeS < 1 ? [1e3, "ms"] : [1, "s"];
+/**
+ * Interpolate a sample index to a microsecond timestamp using chunk boundaries.
+ * Returns null when no chunk data is available.
+ */
+function sampleToUsecs(
+  idx: number,
+  chunkUsecs: Float64Array,
+  chunkCount: number,
+): number | null {
+  if (chunkCount === 0) return null;
+  const ci = Math.floor(idx / MAX_SAMPS);
+  const frac = (idx % MAX_SAMPS) / MAX_SAMPS;
+
+  if (ci < 0) {
+    if (chunkCount >= 2) {
+      const rate = chunkUsecs[1] - chunkUsecs[0];
+      return chunkUsecs[0] + ci * rate + frac * rate;
+    }
+    return chunkUsecs[0];
+  }
+  if (ci + 1 < chunkCount) {
+    return chunkUsecs[ci] + frac * (chunkUsecs[ci + 1] - chunkUsecs[ci]);
+  }
+  if (ci < chunkCount) {
+    if (chunkCount >= 2) {
+      const rate = chunkUsecs[chunkCount - 1] - chunkUsecs[chunkCount - 2];
+      return chunkUsecs[ci] + frac * rate;
+    }
+    return chunkUsecs[0];
+  }
+  // beyond last chunk — extrapolate
+  if (chunkCount >= 2) {
+    const rate = chunkUsecs[chunkCount - 1] - chunkUsecs[chunkCount - 2];
+    return chunkUsecs[chunkCount - 1] + (ci - chunkCount + 1 + frac) * rate;
+  }
+  return chunkUsecs[0];
+}
+
+function timeUnit(rangeUs: number): [number, string] {
+  if (rangeUs < 1000) return [1, "µs"];
+  if (rangeUs < 1_000_000) return [1e-3, "ms"];
+  return [1e-6, "s"];
+}
+
+function formatTime(us: number, mult: number, unit: string): string {
+  return (us * mult).toFixed(2) + " " + unit;
+}
+
+function formatSampleIdx(idx: number): string {
+  const abs = Math.abs(idx);
+  if (abs >= 1e6) return (idx / 1e6).toFixed(2) + "M";
+  if (abs >= 1e3) return (idx / 1e3).toFixed(1) + "k";
+  return Math.round(idx).toString();
 }
 
 function niceStep(range: number, targetCount: number): number {
@@ -25,6 +77,8 @@ function drawGrid(
   xMax: number,
   sampleRate: number,
   colors: ThemeColors,
+  chunkUsecs: Float64Array,
+  chunkCount: number,
 ): void {
   const pl = PAD.l * dpr,
     pb = PAD.b * dpr,
@@ -38,17 +92,31 @@ function drawGrid(
   ctx.lineWidth = dpr;
   ctx.setLineDash([3 * dpr, 4 * dpr]);
 
-  // vertical lines — reuse timeUnit so steps match the axis labels' unit
-  const xRangeSec = (xMax - xMin) / sampleRate;
-  const xStep = niceStep(xRangeSec, Math.max(1, Math.floor(pw / (80 * dpr))));
-  const xStepSamples = xStep * sampleRate;
-  const xStart = Math.ceil(xMin / xStepSamples) * xStepSamples;
-  for (let xi = xStart; xi <= xMax; xi += xStepSamples) {
-    const px = pl + ((xi - xMin) / (xMax - xMin)) * pw;
-    ctx.beginPath();
-    ctx.moveTo(px, pt);
-    ctx.lineTo(px, pt + ph);
-    ctx.stroke();
+  // vertical lines — time-based when timestamps available, sample-count fallback
+  const tMin = sampleToUsecs(xMin, chunkUsecs, chunkCount);
+  const tMax = sampleToUsecs(xMax, chunkUsecs, chunkCount);
+  if (tMin !== null && tMax !== null && tMax > tMin) {
+    const tRange = tMax - tMin;
+    const tStep = niceStep(tRange, Math.max(1, Math.floor(pw / (80 * dpr))));
+    const tStart = Math.ceil(tMin / tStep) * tStep;
+    for (let t = tStart; t <= tMax; t += tStep) {
+      const px = pl + ((t - tMin) / (tMax - tMin)) * pw;
+      ctx.beginPath();
+      ctx.moveTo(px, pt);
+      ctx.lineTo(px, pt + ph);
+      ctx.stroke();
+    }
+  } else {
+    const xRange = xMax - xMin;
+    const xStep = niceStep(xRange, Math.max(1, Math.floor(pw / (80 * dpr))));
+    const xStart = Math.ceil(xMin / xStep) * xStep;
+    for (let xi = xStart; xi <= xMax; xi += xStep) {
+      const px = pl + ((xi - xMin) / (xMax - xMin)) * pw;
+      ctx.beginPath();
+      ctx.moveTo(px, pt);
+      ctx.lineTo(px, pt + ph);
+      ctx.stroke();
+    }
   }
 
   // horizontal lines — match the fixed y-labels [0, 0.25, 0.5, 0.75, 1]
@@ -74,6 +142,8 @@ export function drawAxes(
   sampleRate: number,
   adcMax: number,
   colors: ThemeColors,
+  chunkUsecs: Float64Array,
+  chunkCount: number,
 ): void {
   const pl = PAD.l * dpr,
     pb = PAD.b * dpr,
@@ -85,7 +155,18 @@ export function drawAxes(
   ctx.clearRect(0, 0, W, H);
   ctx.save();
 
-  drawGrid(ctx, W, H, dpr, xMin, xMax, sampleRate, colors);
+  drawGrid(
+    ctx,
+    W,
+    H,
+    dpr,
+    xMin,
+    xMax,
+    sampleRate,
+    colors,
+    chunkUsecs,
+    chunkCount,
+  );
 
   ctx.strokeStyle = colors.border;
   ctx.lineWidth = dpr;
@@ -108,15 +189,26 @@ export function drawAxes(
     ctx.stroke();
   }
 
-  // X-axis labels
+  // X-axis labels — timestamps when available, sample count fallback
   ctx.textBaseline = "top";
   const N_X = 5;
   const xRange = Math.max(xMax - xMin, 1);
-  const [mult, unit] = timeUnit(xRange / sampleRate);
+  const baseUs = sampleToUsecs(0, chunkUsecs, chunkCount);
+  const tMinUs = sampleToUsecs(xMin, chunkUsecs, chunkCount);
+  const tMaxUs = sampleToUsecs(xMax, chunkUsecs, chunkCount);
+  const hasTime =
+    baseUs !== null && tMinUs !== null && tMaxUs !== null && tMaxUs > tMinUs;
+  const [mult, unit] = hasTime ? timeUnit(tMaxUs - tMinUs) : [1, ""];
   for (let i = 0; i <= N_X; i++) {
     const idx = xMin + (xRange * i) / N_X;
     const px = pl + pw * (i / N_X);
-    const label = ((idx / sampleRate) * mult).toFixed(2) + " " + unit;
+    let label: string;
+    if (hasTime) {
+      const t = sampleToUsecs(idx, chunkUsecs, chunkCount)!;
+      label = formatTime(t - baseUs, mult, unit);
+    } else {
+      label = formatSampleIdx(idx);
+    }
     ctx.textAlign = i === 0 ? "left" : i === N_X ? "right" : "center";
     ctx.fillText(label, px, pt + ph + 4 * dpr);
     ctx.beginPath();
@@ -153,6 +245,8 @@ export function drawCrosshair(
   sampleRate: number,
   adcMax: number,
   colors: ThemeColors,
+  chunkUsecs: Float64Array,
+  chunkCount: number,
 ): void {
   const pl = PAD.l * dpr,
     _pb = PAD.b * dpr,
@@ -207,9 +301,16 @@ export function drawCrosshair(
   // tooltip
   const fs = 11 * dpr;
   ctx.font = `${fs}px monospace`;
-  const [mult, unit] = timeUnit((view.xMax - view.xMin) / sampleRate);
-  const timeLabel = ((sampleIdx / sampleRate) * mult).toFixed(2) + " " + unit;
-  const label = `x: ${timeLabel}  y: ${Math.round(yVal)}`;
+  const baseUs = sampleToUsecs(0, chunkUsecs, chunkCount);
+  const tUs = sampleToUsecs(sampleIdx, chunkUsecs, chunkCount);
+  let label: string;
+  if (baseUs !== null && tUs !== null) {
+    const relUs = tUs - baseUs;
+    const [mult, unit] = timeUnit(relUs || 1);
+    label = `t: ${formatTime(relUs, mult, unit)}  y: ${Math.round(yVal)}`;
+  } else {
+    label = `x: ${sampleIdx}  y: ${Math.round(yVal)}`;
+  }
   const tw = ctx.measureText(label).width + 14 * dpr;
   const th = fs + 10 * dpr;
   let tx = hx + 14 * dpr;

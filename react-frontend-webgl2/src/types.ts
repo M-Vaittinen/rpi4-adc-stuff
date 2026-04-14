@@ -2,6 +2,9 @@
 export interface PlotData {
   ys: Float32Array;
   count: number;
+  /** One microsecond timestamp per chunk (indexed by chunk number). */
+  chunkUsecs: Float64Array;
+  chunkCount: number;
 }
 
 /** Visible sample-index range (real-valued, fractional). */
