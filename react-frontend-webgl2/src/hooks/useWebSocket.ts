@@ -1,5 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { WS_URL, MAX_SAMPS, CHUNK_BYTES } from "../config/constants";
+import {
+  WS_URL,
+  MAX_SAMPS,
+  CHUNK_BYTES,
+  DEFAULT_ADC_MAX,
+} from "../config/constants";
 
 type ConnectionStatus = "connected" | "disconnected" | "error";
 
@@ -18,9 +23,11 @@ export interface ParsedFrame {
  *   [usecs: uint32][samples: MAX_SAMPS × uint32][gpio_lev0: MAX_SAMPS × uint32]
  *
  * ADC extraction mirrors the C macro ADC_RAW_VAL:
- *   byte_swap16(raw & 0xFFFF) & 0x7FF  →  11-bit value (0..2047)
+ *   byte_swap16(raw & 0xFFFF) & adcMask  →  ADC value (0..adcMask)
+ *
+ * adcMask must be 2^n - 1 (e.g. 2047, 4095, 65535).
  */
-function parseAdcFrame(buf: ArrayBuffer): ParsedFrame {
+function parseAdcFrame(buf: ArrayBuffer, adcMask: number): ParsedFrame {
   const numChunks = Math.floor(buf.byteLength / CHUNK_BYTES);
   if (numChunks === 0) return { samples: new Float32Array(0), chunkUsecs: [] };
 
@@ -36,9 +43,9 @@ function parseAdcFrame(buf: ArrayBuffer): ParsedFrame {
     for (let i = 0; i < MAX_SAMPS; i++) {
       const raw32 = dv.getUint32(samplesOffset + i * 4, true);
       const raw16 = raw32 & 0xffff;
-      // byte-swap 16-bit then mask to 11 bits
+      // byte-swap 16-bit then apply caller-supplied bit-depth mask
       const swapped = ((raw16 & 0xff) << 8) | ((raw16 >> 8) & 0xff);
-      samples[outIdx++] = swapped & 0x7ff;
+      samples[outIdx++] = swapped & adcMask;
     }
   }
 
@@ -48,6 +55,8 @@ function parseAdcFrame(buf: ArrayBuffer): ParsedFrame {
 interface UseWebSocketParams {
   url?: string;
   onData: (frame: ParsedFrame) => void;
+  /** Bitmask derived from the selected ADC bit depth, e.g. 2047 (11-bit) or 4095 (12-bit). */
+  adcMax?: number;
 }
 
 interface UseWebSocketReturn {
@@ -61,17 +70,22 @@ const RECONNECT_INTERVAL_MS = 2000;
 export function useWebSocket({
   url = WS_URL,
   onData,
+  adcMax = DEFAULT_ADC_MAX,
 }: UseWebSocketParams): UseWebSocketReturn {
   const [status, setStatus] = useState<ConnectionStatus>("disconnected");
   const [streaming, setStreaming] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Use a ref so onData changes never trigger WS reconnection
+  // Refs so changes to onData/adcMax never trigger WS reconnection
   const onDataRef = useRef(onData);
   useEffect(() => {
     onDataRef.current = onData;
   }, [onData]);
+  const adcMaskRef = useRef(adcMax);
+  useEffect(() => {
+    adcMaskRef.current = adcMax;
+  }, [adcMax]);
 
   useEffect(() => {
     let cancelled = false;
@@ -103,7 +117,7 @@ export function useWebSocket({
       ws.onmessage = (e: MessageEvent) => {
         if (cancelled) return;
         if (!(e.data instanceof ArrayBuffer)) return;
-        const frame = parseAdcFrame(e.data);
+        const frame = parseAdcFrame(e.data, adcMaskRef.current);
         if (frame.samples.length > 0) {
           // DEBUG: mirror the Python [adc] log for comparison
           const N_PREVIEW = 8;

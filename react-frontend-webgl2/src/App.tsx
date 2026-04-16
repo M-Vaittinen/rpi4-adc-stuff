@@ -105,6 +105,7 @@ function App() {
 
   const { status, streaming, sendCommand } = useWebSocket({
     onData: handleData,
+    adcMax,
   });
 
   const handleWheel = useCallback(

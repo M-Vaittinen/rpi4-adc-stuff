@@ -14,8 +14,8 @@ Binary wire format (WebSocket binary frames):
     [samples:  MAX_SAMPS × uint32 LE] -- raw SPI words; decode with ADC_RAW_VAL()
     [gpio_lev0:MAX_SAMPS × uint32 LE] -- GPIO level snapshot per sample
 
-  ADC value extraction (mirrors the C macro ADC_RAW_VAL):
-    adc_val = byte_swap16(sample & 0xFFFF) & 0x7FF   (11-bit, 0..2047)
+  ADC value extraction: byte_swap16(sample & 0xFFFF), masked client-side
+    based on the selected ADC bit depth (e.g. & 0x7FF for 11-bit, & 0xFFF for 12-bit)
 
 Environment variables:
   ADC_SERVER_PORT     Port this server listens on   (default: 8765)
@@ -65,10 +65,10 @@ USE_SIM     = (os.environ.get("ADC_USE_SIM", "").lower() in ("1", "true", "yes")
 RING_READ_CHUNKS = 16
 
 # Simulation parameters
-# Waveform amplitudes are scaled for the 11-bit ADC range (0..2047).
+# Waveform amplitudes are scaled for the 12-bit ADC range (0..4095).
 VIRTUAL_RATE = 4000   # simulated samples/sec
-ADC_MID      = 1024   # midpoint of 11-bit range
-NOISE_AMP    = 6      # gaussian noise amplitude (11-bit scale)
+ADC_MID      = 2048   # midpoint of 12-bit range
+NOISE_AMP    = 12     # gaussian noise amplitude (12-bit scale)
 
 DIST_DIR = Path(__file__).resolve().parent / "react-frontend" / "dist"
 
@@ -88,14 +88,14 @@ def csv_to_binary(csv_line: str) -> bytes | None:
 
 # ── mvaring helpers ───────────────────────────────────────────────────────────
 def encode_adc_val(val: int) -> int:
-    """Encode an 11-bit ADC value into the raw SPI word format used by MCP3202.
+    """Encode a 12-bit ADC value into the raw SPI word format used by MCP3202.
 
     This is the inverse of the C macro:
-        ADC_RAW_VAL(d) = (((uint16_t)(d)<<8 | (uint16_t)(d)>>8) & 0x7ff)
+        ADC_RAW_VAL(d) = (((uint16_t)(d)<<8 | (uint16_t)(d)>>8) & 0xfff)
 
     So encode_adc_val(v) produces a raw word d such that ADC_RAW_VAL(d) == v.
     """
-    val &= 0x7FF  # clamp to 11 bits
+    val &= 0xFFF  # clamp to 12 bits
     return ((val << 8) | (val >> 8)) & 0xFFFF
 
 
@@ -138,7 +138,7 @@ def generate_sim_batch(t_offset: float) -> bytes:
         harmonic =  60 * math.sin(2 * math.pi * 3.6  * t)
         noise    = random.gauss(0, NOISE_AMP)
         value    = int(ADC_MID + drift + periodic + harmonic + noise)
-        value    = max(0, min(2047, value))  # clamp to 11-bit range
+        value    = max(0, min(4095, value))  # clamp to 12-bit range
         samples.append(encode_adc_val(value))
     return (struct.pack("<I", usecs)
             + struct.pack(f"<{MAX_SAMPS}I", *samples)
@@ -173,14 +173,15 @@ async def ws_handler(request):
                     await asyncio.sleep(0.001)  # ring empty — yield to event loop
                     continue
                 data = chunks_to_bytes(chunks)
-                # DEBUG: log first chunk's usecs and a few decoded ADC values
+                # DEBUG: log first chunk's usecs and a few raw (byte-swapped) SPI words
                 usecs_val = struct.unpack_from("<I", data, 0)[0]
                 n_preview = 8
                 adc_vals = []
                 for i in range(n_preview):
                     raw = struct.unpack_from("<I", data, 4 + i * 4)[0]
-                    adc = (((raw & 0xFFFF) << 8 | (raw & 0xFFFF) >> 8) & 0xFFFF) & 0x7FF
-                    adc_vals.append(adc)
+                    raw16 = raw & 0xFFFF
+                    swapped = ((raw16 & 0xFF) << 8 | (raw16 >> 8) & 0xFF) & 0xFFFF
+                    adc_vals.append(swapped)
                 adc_str = " ".join(f"[{i}]={v}" for i, v in enumerate(adc_vals))
                 log.debug("chunks=%d usecs=%d %s bytes=%d",
                           len(chunks), usecs_val, adc_str, len(data))
