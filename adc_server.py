@@ -72,6 +72,9 @@ NOISE_AMP    = 12     # gaussian noise amplitude (12-bit scale)
 
 DIST_DIR = Path(__file__).resolve().parent / "react-frontend" / "dist"
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STREAMER_PROGRAM = os.path.join(BASE_DIR, "rpi_adc_stream")
+
 
 # ── CSV-to-binary conversion (legacy / TCP backup path) ──────────────────────
 def csv_to_binary(csv_line: str) -> bytes | None:
@@ -150,20 +153,75 @@ async def ws_handler(request):
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
-    streaming = False
-    task      = None
+    streaming      = False
+    task           = None
+    streamer_proc  = None
+    stderr_task    = None
+    watcher_task   = None
 
-    async def stream_from_adc():
-        """Read from the mvaring ring buffer and forward data as binary WS frames."""
+    async def log_stderr(proc):
+        """Forward rpi_adc_stream stderr lines to web server logger."""
         try:
-            handle = mvaring.open(SHM_NAME)
-        except OSError as e:
-            log.error("Cannot open shared memory '%s': %s", SHM_NAME, e)
-            log.error("Is rpi_adc_stream running? (sudo ./rpi_adc_stream)")
+            async for line in proc.stderr:
+                text = line.decode(errors="replace").rstrip()
+                if text:
+                    log.warning("[rpi_adc_stream] %s", text)
+        except asyncio.CancelledError:
+            pass
+
+    async def kill_streamer(proc, stderr_log_task, watch_task):
+        """Send SIGINT for graceful DMA shutdown, wait, then SIGKILL if needed."""
+        if watch_task:
+            watch_task.cancel()
+        if proc is None or proc.returncode is not None:
+            if stderr_log_task:
+                stderr_log_task.cancel()
             return
-        except ValueError as e:
-            log.error("Ring buffer invalid: %s", e)
-            return
+        try:
+            import signal
+            proc.send_signal(signal.SIGINT)   # graceful: lets rpi_adc_stream release DMA
+            await asyncio.wait_for(proc.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+        if stderr_log_task:
+            await asyncio.gather(stderr_log_task, return_exceptions=True)
+        if watch_task:
+            await asyncio.gather(watch_task, return_exceptions=True)
+        log.info("rpi_adc_stream process stopped (pid %d, rc %d)", proc.pid, proc.returncode)
+
+    async def watch_streamer(proc):
+        """Log a warning if rpi_adc_stream exits unexpectedly."""
+        try:
+            rc = await proc.wait()
+            log.warning("rpi_adc_stream exited unexpectedly (pid %d, rc %d)", proc.pid, rc)
+        except asyncio.CancelledError:
+            pass
+
+    async def stream_from_adc(proc):
+        """Read from the mvaring ring buffer and forward data as binary WS frames."""
+        # Wait for rpi_adc_stream to initialise the ring buffer.
+        # Poll until the ring is available (up to 3 s).
+        deadline = asyncio.get_event_loop().time() + 3.0
+        handle = None
+        while asyncio.get_event_loop().time() < deadline:
+            if proc.returncode is not None:
+                log.error("rpi_adc_stream exited (rc %d) before ring was ready", proc.returncode)
+                return
+            try:
+                handle = mvaring.open(SHM_NAME)
+                break
+            except (OSError, ValueError):
+                await asyncio.sleep(0.1)
+        if handle is None:
+            try:
+                handle = mvaring.open(SHM_NAME)
+            except OSError as e:
+                log.error("Cannot open shared memory '%s': %s", SHM_NAME, e)
+                return
+            except ValueError as e:
+                log.error("Ring buffer invalid: %s", e)
+                return
 
         log.info("Opened ring buffer '%s'", SHM_NAME)
         try:
@@ -224,7 +282,15 @@ async def ws_handler(request):
                     task = asyncio.create_task(stream_sim())
                     log.info("Streaming started (simulation)")
                 else:
-                    task = asyncio.create_task(stream_from_adc())
+                    streamer_proc = await asyncio.create_subprocess_exec(
+                        "sudo", STREAMER_PROGRAM, "-c",
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    log.info("Started rpi_adc_stream (pid %d)", streamer_proc.pid)
+                    stderr_task = asyncio.create_task(log_stderr(streamer_proc))
+                    watcher_task = asyncio.create_task(watch_streamer(streamer_proc))
+                    task = asyncio.create_task(stream_from_adc(streamer_proc))
                     log.info("Streaming started (ADC)")
 
             elif cmd == "stop" and streaming:
@@ -233,6 +299,10 @@ async def ws_handler(request):
                     task.cancel()
                     await task
                     task = None
+                await kill_streamer(streamer_proc, stderr_task, watcher_task)
+                streamer_proc = None
+                stderr_task = None
+                watcher_task = None
                 log.info("Streaming stopped")
 
     except Exception as exc:
@@ -244,6 +314,7 @@ async def ws_handler(request):
                 await task
             except asyncio.CancelledError:
                 pass
+        await kill_streamer(streamer_proc, stderr_task, watcher_task)
         log.info("Client disconnected")
 
     return ws
