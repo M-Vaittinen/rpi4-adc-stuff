@@ -16,6 +16,8 @@ interface WGLPlotProps {
   adcMax?: number;
   live?: boolean;
   windowSize?: number;
+  /** When true, always show the full data range and ignore zoom/pan. */
+  fitAll?: boolean;
   onWheel?: (e: React.WheelEvent<HTMLDivElement>) => void;
 }
 
@@ -28,12 +30,17 @@ export function WGLPlot({
   adcMax = 65535,
   live = false,
   windowSize = 50_000,
+  fitAll = false,
   onWheel,
 }: WGLPlotProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<View>({ xMin: 0, xMax: 1 });
   const autoFitRef = useRef(true);
   const wasLiveRef = useRef(false);
+  const fitAllRef = useRef(fitAll);
+  useEffect(() => {
+    fitAllRef.current = fitAll;
+  }, [fitAll]);
 
   useEffect(() => {
     const _wrap = wrapRef.current;
@@ -170,6 +177,7 @@ export function WGLPlot({
 
     function onWheel(e: WheelEvent) {
       e.preventDefault();
+      if (live && fitAllRef.current) return;
       const count = dataRef.current.count;
       if (count < 2) return;
 
@@ -209,6 +217,7 @@ export function WGLPlot({
       const count = dataRef.current.count;
       if (count < 2) return;
 
+      if (live && fitAllRef.current) return;
       const pw = (W - (PAD.l + PAD.r) * dpr) / dpr;
       const dxSamples =
         ((drag.startClientX - e.clientX) / pw) *
@@ -238,6 +247,7 @@ export function WGLPlot({
     }
 
     function onDblClick() {
+      if (live && fitAllRef.current) return;
       const count = dataRef.current.count;
       autoFit = true;
       if (count >= 2) view = { xMin: 0, xMax: count - 1 };
@@ -280,7 +290,13 @@ export function WGLPlot({
 
       /* keep view in sync with streaming / auto-fit */
       if (count >= 2) {
-        if (live) {
+        if (live && fitAllRef.current) {
+          if (view.xMin !== 0 || view.xMax !== count - 1) {
+            view = { xMin: 0, xMax: count - 1 };
+            viewRef.current = view;
+            dirty = true;
+          }
+        } else if (live) {
           const newMin = Math.max(0, count - windowSize);
           const newMax = count - 1;
           if (view.xMin !== newMin || view.xMax !== newMax) {

@@ -52,6 +52,7 @@ function App() {
   });
 
   const [live, setLive] = useState(false);
+  const [fitAll, setFitAll] = useState(false);
   const [windowSize, setWindowSize] = useState(LIVE_WINDOW_SIZE);
   const [sampleRate, setSampleRate] = useState(DEFAULT_SAMPLE_RATE);
   const [adcMax, setAdcMax] = useState<number>(DEFAULT_ADC_MAX);
@@ -76,6 +77,19 @@ function App() {
 
   const handleData = useCallback((frame: ParsedFrame) => {
     const d = dataRef.current;
+
+    // Detect stream restart: if the new first timestamp is more than 1 s behind
+    // the last stored timestamp, rpi_adc_stream restarted and its hardware clock
+    // reset.  Clear the buffer so the x-axis stays coherent.
+    if (d.chunkCount > 0 && frame.chunkUsecs.length > 0) {
+      const lastTs = d.chunkUsecs[d.chunkCount - 1];
+      const newTs = frame.chunkUsecs[0];
+      if (newTs < lastTs - 1_000_000) {
+        d.count = 0;
+        d.chunkCount = 0;
+      }
+    }
+
     const chunk = frame.samples;
     const needed = d.count + chunk.length;
 
@@ -197,6 +211,7 @@ function App() {
         sampleRate={sampleRate}
         adcMax={adcMax}
         live={live}
+        fitAll={fitAll}
         windowSize={windowSize}
       />
 
@@ -260,6 +275,17 @@ function App() {
             />
             Live
           </Label>
+          <Label
+            title="Always show all recorded data while streaming (zoom/pan disabled)"
+            className="gap-1.5"
+          >
+            <Checkbox
+              checked={fitAll}
+              disabled={!live}
+              onCheckedChange={(checked) => setFitAll(checked === true)}
+            />
+            Fit all
+          </Label>
           <Slider
             title="Live window size"
             value={[windowSize]}
@@ -267,7 +293,7 @@ function App() {
             min={LIVE_WINDOW_MIN}
             max={LIVE_WINDOW_MAX}
             step={LIVE_WINDOW_STEP_SIZE}
-            disabled={!live}
+            disabled={!live || fitAll}
             className="w-32"
           />
           <Input
@@ -277,7 +303,7 @@ function App() {
             max={LIVE_WINDOW_MAX}
             step={LIVE_WINDOW_STEP_SIZE}
             value={[windowSize].toString()}
-            disabled={!live}
+            disabled={!live || fitAll}
             onChange={(e) =>
               setWindowSize(Number(e.target.value) || LIVE_WINDOW_MIN)
             }
