@@ -586,12 +586,14 @@ int shm_try_open(struct shmem_info *shi, struct mvaring **mr)
 // Main program
 int main(int argc, char *argv[])
 {
-	const uint32_t pwm_range = (PWM_FREQ * 2) / SAMPLE_RATE;
 	static struct option long_options[] = {
+		{"rate-ksps",	required_argument,	NULL, 'r'},
 		{"create-shm",	no_argument,		NULL, 'c'},
 		{"help",	no_argument,		NULL, 'h'},
 		{NULL,           0,                 NULL, 0}
 	};
+	long int sample_rate = SAMPLE_RATE;
+	uint32_t pwm_range;
 	struct mvaring *mr;
 	int f, ret, opt;
 	bool create_shm = false;
@@ -609,11 +611,22 @@ int main(int argc, char *argv[])
 		case 'h':
 			print_usage(argv[0]);
 			return 0;
+		case 'r':
+			sample_rate = strtol(optarg, NULL, 10) * 1000;
+			if (sample_rate * 1000 < 1 || sample_rate > MAX_SAMPLE_RATE) {
+				fprintf(stderr, "Bad sample-rate\n");
+				fprintf(stderr, "Use -h for help\n");
+				return 1;
+			}
+
+			break;
 		default:
 			fprintf(stderr, "Use -h for help\n");
 			return 1;
 		}
 	}
+
+	pwm_range = (PWM_FREQ * 2) / sample_rate;
 
 	if (create_shm)
 		ret = rpi_shm_create(&g_shm_info, &mr);
@@ -629,8 +642,8 @@ int main(int argc, char *argv[])
 	signal(SIGINT, terminate);
 	f = init_spi(SPI_FREQ);
 
-	printf("Streaming %u samples per block at %llu S/s, freq %d\n",
-	       MAX_SAMPS, SAMPLE_RATE, f);
+	printf("Streaming %u samples per block at %ld S/s, freq %d\n",
+	       MAX_SAMPS, sample_rate, f);
 	adc_dma_init(&vc_mem, MAX_SAMPS, 0, pwm_range);
 	adc_stream_start();
 	while (1)
