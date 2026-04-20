@@ -604,7 +604,7 @@ int main(int argc, char *argv[])
 
 
 	/* Parse command line arguments */
-	while ((opt = getopt_long(argc, argv, "ch", long_options, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "chr:", long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'c':
 			create_shm = true;
