@@ -119,16 +119,16 @@ export function useWebSocket({
         if (!(e.data instanceof ArrayBuffer)) return;
         const frame = parseAdcFrame(e.data, adcMaskRef.current);
         if (frame.samples.length > 0) {
-          // DEBUG: mirror the Python [adc] log for comparison
-          const N_PREVIEW = 8;
-          const usecs = frame.chunkUsecs[0] ?? 0;
-          const adcParts = Array.from(
-            { length: N_PREVIEW },
-            (_, i) => `[${i}]=${frame.samples[i]}`,
-          );
-          console.log(
-            `[adc] chunks=${frame.chunkUsecs.length} usecs=${usecs} ${adcParts.join(" ")} bytes=${e.data.byteLength}`,
-          );
+          // // DEBUG: mirror the Python [adc] log for comparison
+          // const N_PREVIEW = 8;
+          // const usecs = frame.chunkUsecs[0] ?? 0;
+          // const adcParts = Array.from(
+          //   { length: N_PREVIEW },
+          //   (_, i) => `[${i}]=${frame.samples[i]}`,
+          // );
+          // console.log(
+          //   `[adc] chunks=${frame.chunkUsecs.length} usecs=${usecs} ${adcParts.join(" ")} bytes=${e.data.byteLength}`,
+          // );
           onDataRef.current?.(frame);
         }
       };
@@ -146,7 +146,7 @@ export function useWebSocket({
   const sendCommand = useCallback((cmd: string) => {
     if (wsRef.current?.readyState !== WebSocket.OPEN) return;
     wsRef.current.send(cmd);
-    if (cmd === "start") {
+    if (cmd.startsWith("start")) {
       setStreaming(true);
     } else {
       setStreaming(false);

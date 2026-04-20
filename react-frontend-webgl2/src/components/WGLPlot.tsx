@@ -355,7 +355,6 @@ export function WGLPlot({
           count,
           count >= 2 ? view.xMin : 0,
           count >= 2 ? view.xMax : 1,
-          sampleRate,
           adcMax,
           colors,
           dataRef.current.chunkUsecs,

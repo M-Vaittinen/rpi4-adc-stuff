@@ -274,26 +274,38 @@ async def ws_handler(request):
             if msg.type != WSMsgType.TEXT:
                 continue
 
-            cmd = msg.data.strip().lower()
+            cmd = msg.data.strip()
+            parts = cmd.split()
+            cmd_name = parts[0].lower()
 
-            if cmd == "start" and not streaming:
+            if cmd_name == "start" and not streaming:
+                sample_rate = None
+                if len(parts) > 1:
+                    try:
+                        sample_rate = int(parts[1]) // 1000  # frontend sends Hz; -r expects kHz
+                    except ValueError:
+                        log.warning("Invalid sample rate '%s', ignoring", parts[1])
                 streaming = True
                 if USE_SIM:
                     task = asyncio.create_task(stream_sim())
                     log.info("Streaming started (simulation)")
                 else:
+                    streamer_cmd = ["sudo", STREAMER_PROGRAM, "-c"]
+                    if sample_rate is not None:
+                        streamer_cmd += ["-r", str(sample_rate)]
                     streamer_proc = await asyncio.create_subprocess_exec(
-                        "sudo", STREAMER_PROGRAM, "-c",
+                        *streamer_cmd,
                         stdout=asyncio.subprocess.DEVNULL,
                         stderr=asyncio.subprocess.PIPE,
                     )
-                    log.info("Started rpi_adc_stream (pid %d)", streamer_proc.pid)
+                    log.info("Started rpi_adc_stream (pid %d)%s", streamer_proc.pid,
+                             f" at {sample_rate} Hz" if sample_rate else "")
                     stderr_task = asyncio.create_task(log_stderr(streamer_proc))
                     watcher_task = asyncio.create_task(watch_streamer(streamer_proc))
                     task = asyncio.create_task(stream_from_adc(streamer_proc))
                     log.info("Streaming started (ADC)")
 
-            elif cmd == "stop" and streaming:
+            elif cmd_name == "stop" and streaming:
                 streaming = False
                 if task:
                     task.cancel()

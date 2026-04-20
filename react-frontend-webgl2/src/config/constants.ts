@@ -20,9 +20,9 @@ export const MIN_VISIBLE = 10; // minimum samples visible when zoomed in
 // Streaming defaults
 export const DEFAULT_SAMPLE_RATE = 200_000;
 export const LIVE_WINDOW_SIZE = 50_000;
-export const LIVE_WINDOW_MIN = 1_000;
+export const LIVE_WINDOW_MIN = 100;
 export const LIVE_WINDOW_MAX = 1_000_000;
-export const LIVE_WINDOW_STEP_SIZE = 1_000;
+export const LIVE_WINDOW_STEP_SIZE = 100;
 
 // ADC bit-depth options (value = max raw count)
 export const ADC_OPTIONS = [

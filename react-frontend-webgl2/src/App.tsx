@@ -3,8 +3,10 @@ import type { PlotData } from "./types";
 import { useWebSocket, type ParsedFrame } from "./hooks/useWebSocket";
 import { WGLPlot } from "./components/WGLPlot";
 import { StatusDot } from "./components/StatusDot";
-import { generateSineData } from "./utils/sineData";
+// import { generateSineData } from "./utils/sineData";
 import { saveCanvasesAsImage } from "./utils/saveImage";
+import { saveAsCsv } from "./utils/saveCsv";
+import { loadCsvFile } from "./utils/loadCsv";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -18,6 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Toaster } from "@/components/ui/sonner";
 import {
   PlayIcon,
   StopIcon,
@@ -38,6 +41,7 @@ import {
   NOT_IMPLEMENTED,
   APP_VERSION,
 } from "@/config/constants";
+import { toast } from "sonner";
 
 // shadcn preset: --preset b4hIZmq00
 
@@ -51,40 +55,43 @@ function App() {
     chunkCount: 0,
   });
 
+  const importInputRef = useRef<HTMLInputElement>(null);
+
   const [live, setLive] = useState(false);
   const [fitAll, setFitAll] = useState(false);
   const [windowSize, setWindowSize] = useState(LIVE_WINDOW_SIZE);
   const [sampleRate, setSampleRate] = useState(DEFAULT_SAMPLE_RATE);
   const [adcMax, setAdcMax] = useState<number>(DEFAULT_ADC_MAX);
 
-  const [elapsedMs, _setElapsedMs] = useState<number | null>(null);
-  // const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // const streamStartRef = useRef<number | null>(null);
+  const [elapsedMs, setElapsedMs] = useState<number | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const streamStartRef = useRef<number | null>(null);
 
-  // function startTimer() {
-  //   streamStartRef.current = performance.now();
-  //   setElapsedMs(0);
-  //   timerRef.current = setInterval(() => {
-  //     setElapsedMs(performance.now() - streamStartRef.current!);
-  //   }, 100);
-  // }
+  function startTimer() {
+    streamStartRef.current = performance.now();
+    setElapsedMs(0);
+    timerRef.current = setInterval(() => {
+      setElapsedMs(performance.now() - streamStartRef.current!);
+    }, 100);
+  }
 
-  // function stopTimer() {
-  //   if (timerRef.current !== null) clearInterval(timerRef.current);
-  //   if (streamStartRef.current !== null)
-  //     setElapsedMs(performance.now() - streamStartRef.current);
-  // }
+  function stopTimer() {
+    if (timerRef.current !== null) clearInterval(timerRef.current);
+    if (streamStartRef.current !== null)
+      setElapsedMs(performance.now() - streamStartRef.current);
+  }
 
   const handleData = useCallback((frame: ParsedFrame) => {
     const d = dataRef.current;
 
-    // Detect stream restart: if the new first timestamp is more than 1 s behind
-    // the last stored timestamp, rpi_adc_stream restarted and its hardware clock
-    // reset.  Clear the buffer so the x-axis stays coherent.
+    // Detect stream restart: rpi_adc_stream resets its hardware clock on each
+    // start, so new timestamps begin at 0. Any new timestamp that is less than
+    // the last stored timestamp means a new session began — clear the buffer so
+    // the x-axis stays coherent.
     if (d.chunkCount > 0 && frame.chunkUsecs.length > 0) {
       const lastTs = d.chunkUsecs[d.chunkCount - 1];
       const newTs = frame.chunkUsecs[0];
-      if (newTs < lastTs - 1_000_000) {
+      if (newTs < lastTs) {
         d.count = 0;
         d.chunkCount = 0;
       }
@@ -162,11 +169,11 @@ function App() {
           {status}
         </strong>
         <Separator orientation="vertical" />
-        elapsed:{" "}
+        elapsed:
         <strong>
-          {elapsedMs === null ? "—" : (elapsedMs / 1000).toFixed(1) + " s"}
+          {elapsedMs === null ? "—" : (elapsedMs / 1000).toFixed(2) + " s"}
         </strong>
-        <Button
+        {/* <Button
           onClick={() => {
             dataRef.current = generateSineData(5_000_000);
           }}
@@ -179,20 +186,54 @@ function App() {
           }}
         >
           Sine 10M
-        </Button>
+        </Button> */}
         <div className="ml-auto flex gap-2">
-          <span title="Not yet implemented">
-            <Button variant="outline" disabled>
-              <DownloadSimpleIcon data-icon="inline-start" />
-              Import
-            </Button>
-          </span>
-          <span title="Not yet implemented">
-            <Button variant="outline" disabled>
-              <UploadSimpleIcon data-icon="inline-start" />
-              Export
-            </Button>
-          </span>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".csv"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              loadCsvFile(
+                file,
+                (data) => {
+                  dataRef.current = data;
+                  toast.success("Data imported successfully", {
+                    position: "top-center",
+                  });
+                },
+                (e) =>
+                  toast.error(`Import failed: ${e}`, {
+                    position: "top-center",
+                  }),
+              );
+              e.target.value = "";
+            }}
+          />
+          <Button
+            variant="outline"
+            title="Import CSV file"
+            onClick={() => importInputRef.current?.click()}
+          >
+            <DownloadSimpleIcon data-icon="inline-start" />
+            Import
+          </Button>
+          <Button
+            variant="outline"
+            title="Export all samples to CSV"
+            onClick={() =>
+              saveAsCsv(dataRef.current, (e) =>
+                toast.error(`Export failed: ${e}`, {
+                  position: "top-center",
+                }),
+              )
+            }
+          >
+            <UploadSimpleIcon data-icon="inline-start" />
+            Export
+          </Button>
           <Button
             title="Save current view as image"
             onClick={() => saveCanvasesAsImage("plotter")}
@@ -240,8 +281,8 @@ function App() {
             title="Start streaming"
             disabled={streaming || status != "connected"}
             onClick={() => {
-              sendCommand("start");
-              // startTimer();
+              sendCommand(`start ${sampleRate}`);
+              startTimer();
             }}
           >
             <PlayIcon data-icon="inline-start" />
@@ -251,7 +292,7 @@ function App() {
             disabled={!streaming}
             onClick={() => {
               sendCommand("stop");
-              // stopTimer();
+              stopTimer();
             }}
           >
             <StopIcon data-icon="inline-start" />
@@ -335,20 +376,27 @@ function App() {
             </Select>
           </div>
           <Separator orientation="vertical" className="h-6" />
-          <Label className="gap-1.5" title="Static sample rate">
+          <Label className="gap-1.5" title="Sample rate">
             sample rate (S/s)
             <Input
               id="samplerate"
               type="number"
-              min={1}
+              min={1000}
+              step={1000}
               value={sampleRate}
-              onChange={(e) => setSampleRate(Number(e.target.value) || 1)}
+              onChange={(e) => setSampleRate(Number(e.target.value) || 1000)}
+              onBlur={(e) =>
+                Number(e.target.value) < 1000
+                  ? setSampleRate(1000)
+                  : setSampleRate(Number(e.target.value))
+              }
               className="w-24"
-              disabled={NOT_IMPLEMENTED}
+              disabled={streaming}
             />
           </Label>
         </div>
       </div>
+      <Toaster />
     </div>
   );
 }

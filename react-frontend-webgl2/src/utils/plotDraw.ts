@@ -75,10 +75,7 @@ function drawGrid(
   dpr: number,
   xMin: number,
   xMax: number,
-  _sampleRate: number,
   colors: ThemeColors,
-  chunkUsecs: Float64Array,
-  chunkCount: number,
 ): void {
   const pl = PAD.l * dpr,
     pb = PAD.b * dpr,
@@ -92,31 +89,19 @@ function drawGrid(
   ctx.lineWidth = dpr;
   ctx.setLineDash([3 * dpr, 4 * dpr]);
 
-  // vertical lines — time-based when timestamps available, sample-count fallback
-  const tMin = sampleToUsecs(xMin, chunkUsecs, chunkCount);
-  const tMax = sampleToUsecs(xMax, chunkUsecs, chunkCount);
-  if (tMin !== null && tMax !== null && tMax > tMin) {
-    const tRange = tMax - tMin;
-    const tStep = niceStep(tRange, Math.max(1, Math.floor(pw / (80 * dpr))));
-    const tStart = Math.ceil(tMin / tStep) * tStep;
-    for (let t = tStart; t <= tMax; t += tStep) {
-      const px = pl + ((t - tMin) / (tMax - tMin)) * pw;
-      ctx.beginPath();
-      ctx.moveTo(px, pt);
-      ctx.lineTo(px, pt + ph);
-      ctx.stroke();
-    }
-  } else {
-    const xRange = xMax - xMin;
-    const xStep = niceStep(xRange, Math.max(1, Math.floor(pw / (80 * dpr))));
-    const xStart = Math.ceil(xMin / xStep) * xStep;
-    for (let xi = xStart; xi <= xMax; xi += xStep) {
-      const px = pl + ((xi - xMin) / (xMax - xMin)) * pw;
-      ctx.beginPath();
-      ctx.moveTo(px, pt);
-      ctx.lineTo(px, pt + ph);
-      ctx.stroke();
-    }
+  // vertical lines — always in sample-index space so grid lines land on data points
+  const xRange = xMax - xMin;
+  const xStep = Math.max(
+    1,
+    Math.round(niceStep(xRange, Math.max(1, Math.floor(pw / (80 * dpr))))),
+  );
+  const xStart = Math.ceil(xMin / xStep) * xStep;
+  for (let xi = xStart; xi <= xMax; xi += xStep) {
+    const px = pl + ((xi - xMin) / (xMax - xMin)) * pw;
+    ctx.beginPath();
+    ctx.moveTo(px, pt);
+    ctx.lineTo(px, pt + ph);
+    ctx.stroke();
   }
 
   // horizontal lines — match the fixed y-labels [0, 0.25, 0.5, 0.75, 1]
@@ -139,7 +124,6 @@ export function drawAxes(
   count: number,
   xMin: number,
   xMax: number,
-  sampleRate: number,
   adcMax: number,
   colors: ThemeColors,
   chunkUsecs: Float64Array,
@@ -155,18 +139,7 @@ export function drawAxes(
   ctx.clearRect(0, 0, W, H);
   ctx.save();
 
-  drawGrid(
-    ctx,
-    W,
-    H,
-    dpr,
-    xMin,
-    xMax,
-    sampleRate,
-    colors,
-    chunkUsecs,
-    chunkCount,
-  );
+  drawGrid(ctx, W, H, dpr, xMin, xMax, colors);
 
   ctx.strokeStyle = colors.border;
   ctx.lineWidth = dpr;
@@ -194,18 +167,26 @@ export function drawAxes(
   const N_X = 5;
   const xRange = Math.max(xMax - xMin, 1);
   const baseUs = sampleToUsecs(0, chunkUsecs, chunkCount);
-  const tMinUs = sampleToUsecs(xMin, chunkUsecs, chunkCount);
-  const tMaxUs = sampleToUsecs(xMax, chunkUsecs, chunkCount);
+  // Clamp to actual data range so we never extrapolate before sample 0
+  const clampedXMin = Math.max(0, xMin);
+  const clampedXMax = Math.min(count - 1, xMax);
+  const tMinUs = sampleToUsecs(clampedXMin, chunkUsecs, chunkCount);
+  const tMaxUs = sampleToUsecs(clampedXMax, chunkUsecs, chunkCount);
   const hasTime =
-    baseUs !== null && tMinUs !== null && tMaxUs !== null && tMaxUs > tMinUs;
-  const [mult, unit] = hasTime ? timeUnit(tMaxUs - tMinUs) : [1, ""];
+    chunkCount >= 2 &&
+    baseUs !== null &&
+    tMinUs !== null &&
+    tMaxUs !== null &&
+    tMaxUs > tMinUs;
+  const [mult, unit] = hasTime ? timeUnit(tMaxUs! - tMinUs!) : [1, ""];
   for (let i = 0; i <= N_X; i++) {
     const idx = xMin + (xRange * i) / N_X;
     const px = pl + pw * (i / N_X);
     let label: string;
     if (hasTime) {
-      const t = sampleToUsecs(idx, chunkUsecs, chunkCount)!;
-      label = formatTime(t - baseUs, mult, unit);
+      const clampedIdx = Math.max(0, Math.min(count - 1, idx));
+      const t = sampleToUsecs(clampedIdx, chunkUsecs, chunkCount)!;
+      label = formatTime(t - baseUs!, mult, unit);
     } else {
       label = formatSampleIdx(idx);
     }
