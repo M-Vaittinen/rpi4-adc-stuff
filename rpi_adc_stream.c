@@ -548,6 +548,7 @@ static void print_usage(const char *prog_name)
 	printf("Usage: %s [options]\n", prog_name);
 	printf("Start reading ADC data\n\n");
 	printf("Options:\n");
+	printf("  -r  --rate-ksps        Sampling frequency in kHz, default %llu\n", SAMPLE_RATE / 1000);
 	printf("  -c  --create-shm       Create the shared-memory buffer and start reading\n");
 	printf("  -h, --help             Show this help message\n\n");
 	printf("Output data to 'mvaring' type ring buffer in shared memory\n");
