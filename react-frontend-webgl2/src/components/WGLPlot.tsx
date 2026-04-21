@@ -13,6 +13,7 @@ interface WGLPlotProps {
   height?: number | string;
   style?: React.CSSProperties;
   sampleRate?: number;
+  actualSampleRate?: number | null;
   adcMax?: number;
   live?: boolean;
   windowSize?: number;
@@ -27,6 +28,7 @@ export function WGLPlot({
   height = 400,
   style,
   sampleRate = 1,
+  actualSampleRate = null,
   adcMax = 65535,
   live = false,
   windowSize = 50_000,
@@ -41,6 +43,10 @@ export function WGLPlot({
   useEffect(() => {
     fitAllRef.current = fitAll;
   }, [fitAll]);
+  const actualSampleRateRef = useRef(actualSampleRate);
+  useEffect(() => {
+    actualSampleRateRef.current = actualSampleRate;
+  }, [actualSampleRate]);
 
   useEffect(() => {
     const _wrap = wrapRef.current;
@@ -65,8 +71,8 @@ export function WGLPlot({
     hoverCanvas.style.pointerEvents = "none";
     glCanvas.style.cursor = "crosshair";
 
-    wrap.appendChild(glCanvas);
     wrap.appendChild(axisCanvas);
+    wrap.appendChild(glCanvas);
     wrap.appendChild(hoverCanvas);
 
     /* ── pixel dimensions ────────────────────────────────────────────── */
@@ -316,9 +322,11 @@ export function WGLPlot({
       if (dirty && W > 0 && H > 0) {
         dirty = false;
 
-        gl.clearColor(...colors.cardGl, 1);
+        gl.clearColor(0, 0, 0, 0);
         gl.clear(gl.COLOR_BUFFER_BIT);
         ctx2.clearRect(0, 0, W, H);
+        ctx2.fillStyle = colors.background;
+        ctx2.fillRect(0, 0, W, H);
 
         if (count >= 2) {
           const { xMin, xMax } = view;
@@ -359,6 +367,8 @@ export function WGLPlot({
           colors,
           dataRef.current.chunkUsecs,
           dataRef.current.chunkCount,
+          actualSampleRateRef.current,
+          sampleRate,
         );
       }
 

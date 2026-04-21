@@ -61,25 +61,26 @@ function App() {
   const [fitAll, setFitAll] = useState(false);
   const [windowSize, setWindowSize] = useState(LIVE_WINDOW_SIZE);
   const [sampleRate, setSampleRate] = useState(DEFAULT_SAMPLE_RATE);
+  const [actualSampleRate, setActualSampleRate] = useState<number | null>(null);
   const [adcMax, setAdcMax] = useState<number>(DEFAULT_ADC_MAX);
 
-  const [elapsedMs, setElapsedMs] = useState<number | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const streamStartRef = useRef<number | null>(null);
+  // const [elapsedMs, setElapsedMs] = useState<number | null>(null);
+  // const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // const streamStartRef = useRef<number | null>(null);
 
-  function startTimer() {
-    streamStartRef.current = performance.now();
-    setElapsedMs(0);
-    timerRef.current = setInterval(() => {
-      setElapsedMs(performance.now() - streamStartRef.current!);
-    }, 100);
-  }
+  // function startTimer() {
+  //   streamStartRef.current = performance.now();
+  //   setElapsedMs(0);
+  //   timerRef.current = setInterval(() => {
+  //     setElapsedMs(performance.now() - streamStartRef.current!);
+  //   }, 100);
+  // }
 
-  function stopTimer() {
-    if (timerRef.current !== null) clearInterval(timerRef.current);
-    if (streamStartRef.current !== null)
-      setElapsedMs(performance.now() - streamStartRef.current);
-  }
+  // function stopTimer() {
+  //   if (timerRef.current !== null) clearInterval(timerRef.current);
+  //   if (streamStartRef.current !== null)
+  //     setElapsedMs(performance.now() - streamStartRef.current);
+  // }
 
   const handleData = useCallback((frame: ParsedFrame) => {
     const d = dataRef.current;
@@ -130,6 +131,7 @@ function App() {
     onInfo: (msg) => {
       if (msg.type === "actual_sample_rate" && typeof msg.value === "number") {
         console.log("Actual sample-rate:", msg.value, "Hz");
+        setActualSampleRate(msg.value);
       }
     },
   });
@@ -255,6 +257,7 @@ function App() {
         dataRef={dataRef}
         style={{ flex: 1, minHeight: 0 }}
         sampleRate={sampleRate}
+        actualSampleRate={actualSampleRate}
         adcMax={adcMax}
         live={live}
         fitAll={fitAll}
@@ -287,7 +290,7 @@ function App() {
             disabled={streaming || status != "connected"}
             onClick={() => {
               sendCommand(`start ${sampleRate}`);
-              startTimer();
+              // startTimer();
             }}
           >
             <PlayIcon data-icon="inline-start" />
@@ -297,7 +300,7 @@ function App() {
             disabled={!streaming}
             onClick={() => {
               sendCommand("stop");
-              stopTimer();
+              // stopTimer();
             }}
           >
             <StopIcon data-icon="inline-start" />

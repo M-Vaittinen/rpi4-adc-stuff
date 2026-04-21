@@ -68,6 +68,15 @@ function niceStep(range: number, targetCount: number): number {
   return nice * mag;
 }
 
+/** Round value UP to the nearest 1/2/5/10... nice number. */
+function niceValue(value: number): number {
+  if (value <= 0) return 1;
+  const mag = Math.pow(10, Math.floor(Math.log10(value)));
+  const norm = value / mag;
+  const nice = norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10;
+  return nice * mag;
+}
+
 function drawGrid(
   ctx: CanvasRenderingContext2D,
   W: number,
@@ -75,6 +84,7 @@ function drawGrid(
   dpr: number,
   xMin: number,
   xMax: number,
+  xStep: number,
   colors: ThemeColors,
 ): void {
   const pl = PAD.l * dpr,
@@ -85,16 +95,11 @@ function drawGrid(
   const ph = H - pt - pb;
 
   ctx.save();
-  ctx.strokeStyle = colors.grid;
+  ctx.strokeStyle = colors.foreground40;
   ctx.lineWidth = dpr;
   ctx.setLineDash([3 * dpr, 4 * dpr]);
 
   // vertical lines — always in sample-index space so grid lines land on data points
-  const xRange = xMax - xMin;
-  const xStep = Math.max(
-    1,
-    Math.round(niceStep(xRange, Math.max(1, Math.floor(pw / (80 * dpr))))),
-  );
   const xStart = Math.ceil(xMin / xStep) * xStep;
   for (let xi = xStart; xi <= xMax; xi += xStep) {
     const px = pl + ((xi - xMin) / (xMax - xMin)) * pw;
@@ -128,6 +133,8 @@ export function drawAxes(
   colors: ThemeColors,
   chunkUsecs: Float64Array,
   chunkCount: number,
+  actualSampleRate: number | null,
+  sampleRate: number,
 ): void {
   const pl = PAD.l * dpr,
     pb = PAD.b * dpr,
@@ -139,7 +146,14 @@ export function drawAxes(
   ctx.clearRect(0, 0, W, H);
   ctx.save();
 
-  drawGrid(ctx, W, H, dpr, xMin, xMax, colors);
+  const xRange = Math.max(xMax - xMin, 1);
+
+  // Compute grid x step here so labels align with grid lines
+  const xStep = Math.max(
+    1,
+    Math.round(niceStep(xRange, Math.max(1, Math.floor(pw / (80 * dpr))))),
+  );
+  drawGrid(ctx, W, H, dpr, xMin, xMax, xStep, colors);
 
   ctx.strokeStyle = colors.border;
   ctx.lineWidth = dpr;
@@ -162,12 +176,9 @@ export function drawAxes(
     ctx.stroke();
   }
 
-  // X-axis labels — timestamps when available, sample count fallback
+  // X-axis labels — Saleae-style: absolute time at major boundaries, relative offsets between
   ctx.textBaseline = "top";
-  const N_X = 5;
-  const xRange = Math.max(xMax - xMin, 1);
   const baseUs = sampleToUsecs(0, chunkUsecs, chunkCount);
-  // Clamp to actual data range so we never extrapolate before sample 0
   const clampedXMin = Math.max(0, xMin);
   const clampedXMax = Math.min(count - 1, xMax);
   const tMinUs = sampleToUsecs(clampedXMin, chunkUsecs, chunkCount);
@@ -178,24 +189,66 @@ export function drawAxes(
     tMinUs !== null &&
     tMaxUs !== null &&
     tMaxUs > tMinUs;
-  const [mult, unit] = hasTime ? timeUnit(tMaxUs! - tMinUs!) : [1, ""];
-  for (let i = 0; i <= N_X; i++) {
-    const idx = xMin + (xRange * i) / N_X;
-    const px = pl + pw * (i / N_X);
-    let label: string;
-    if (hasTime) {
-      const clampedIdx = Math.max(0, Math.min(count - 1, idx));
-      const t = sampleToUsecs(clampedIdx, chunkUsecs, chunkCount)!;
-      label = formatTime(t - baseUs!, mult, unit);
-    } else {
-      label = formatSampleIdx(idx);
+  const xStart = Math.ceil(xMin / xStep) * xStep;
+
+  if (hasTime) {
+    // Estimate the time span of one grid step
+    const xi0 = Math.max(0, Math.min(count - 1, xStart));
+    const xi1 = Math.max(0, Math.min(count - 1, xStart + xStep));
+    const stepUs =
+      Math.abs(
+        sampleToUsecs(xi1, chunkUsecs, chunkCount)! -
+          sampleToUsecs(xi0, chunkUsecs, chunkCount)!,
+      ) || 1;
+
+    // Major interval: next nice value >= ~6x the grid step
+    const majorUs = niceValue(stepUs * 6);
+    const [absMult, absUnit] = timeUnit(majorUs);
+    const [deltaMult, deltaUnit] = timeUnit(stepUs);
+
+    let prevMajorIdx = -Infinity; // tracks which major segment we're in
+    let anchorTAbs = 0; // actual timestamp of the last anchor grid line
+
+    for (let xi = xStart; xi <= xMax; xi += xStep) {
+      const px = pl + ((xi - xMin) / xRange) * pw;
+      const clampedIdx = Math.max(0, Math.min(count - 1, xi));
+      const tAbs = sampleToUsecs(clampedIdx, chunkUsecs, chunkCount)! - baseUs!;
+      const majorIdx = Math.floor(tAbs / majorUs);
+      const isAnchor = majorIdx !== prevMajorIdx;
+      const majorBoundaryUs = majorIdx * majorUs;
+
+      let label: string;
+      const frac = (xi - xMin) / xRange;
+      if (isAnchor) {
+        label = formatTime(majorBoundaryUs, absMult, absUnit);
+        prevMajorIdx = majorIdx;
+        anchorTAbs = tAbs; // record actual time of this grid line as the offset base
+      } else {
+        const delta = tAbs - anchorTAbs;
+        label = "+" + formatTime(delta, deltaMult, deltaUnit);
+      }
+
+      ctx.textAlign = frac < 0.05 ? "left" : frac > 0.95 ? "right" : "center";
+      ctx.fillStyle = isAnchor ? colors.foreground : colors.foreground40;
+      ctx.fillText(label, px, pt + ph + (isAnchor ? 18 : 4) * dpr);
+      ctx.fillStyle = colors.foreground;
+      ctx.beginPath();
+      ctx.moveTo(px, pt + ph);
+      ctx.lineTo(px, pt + ph + (isAnchor ? 5 : 3) * dpr);
+      ctx.stroke();
     }
-    ctx.textAlign = i === 0 ? "left" : i === N_X ? "right" : "center";
-    ctx.fillText(label, px, pt + ph + 4 * dpr);
-    ctx.beginPath();
-    ctx.moveTo(px, pt + ph);
-    ctx.lineTo(px, pt + ph + 3 * dpr);
-    ctx.stroke();
+  } else {
+    // Fallback: sample indices
+    for (let xi = xStart; xi <= xMax; xi += xStep) {
+      const px = pl + ((xi - xMin) / xRange) * pw;
+      const frac = (xi - xMin) / xRange;
+      ctx.textAlign = frac < 0.05 ? "left" : frac > 0.95 ? "right" : "center";
+      ctx.fillText(formatSampleIdx(xi), px, pt + ph + 4 * dpr);
+      ctx.beginPath();
+      ctx.moveTo(px, pt + ph);
+      ctx.lineTo(px, pt + ph + 3 * dpr);
+      ctx.stroke();
+    }
   }
 
   // Sample count watermark
@@ -210,6 +263,22 @@ export function drawAxes(
   ctx.strokeText(watermark, wx, wy);
   ctx.fillStyle = colors.foreground;
   ctx.fillText(watermark, wx, wy);
+
+  if (actualSampleRate !== null && actualSampleRate !== sampleRate) {
+    ctx.textAlign = "right";
+    ctx.textBaseline = "bottom";
+    ctx.strokeStyle = "black";
+    ctx.lineWidth = 3 * dpr;
+    ctx.lineJoin = "round";
+    const srLabel = `actual sample rate = ${actualSampleRate.toLocaleString()} Hz`;
+    const rx = pl + pw - 4 * dpr;
+    const ry = pt + ph - 2 * dpr;
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 300);
+    const fillColor = pulse > 0.5 ? colors.foreground : "#ff6060";
+    ctx.strokeText(srLabel, rx, ry);
+    ctx.fillStyle = fillColor;
+    ctx.fillText(srLabel, rx, ry);
+  }
 
   ctx.restore();
 }

@@ -24,6 +24,7 @@ export interface ThemeColors {
   popoverForeground: string;
   // Derived with alpha
   foreground20: string;
+  foreground40: string;
   foreground60: string;
   popover90: string;
   // WebGL colors (RGB 0–1 floats)
@@ -54,6 +55,7 @@ export function getThemeColors(): ThemeColors {
     popover,
     popoverForeground,
     foreground20: withAlpha(foreground, 0.2),
+    foreground40: withAlpha(foreground, 0.4),
     foreground60: withAlpha(foreground, 0.6),
     popover90: withAlpha(popover, 0.9),
     chart1Gl: cssColorToGl(chart1),
