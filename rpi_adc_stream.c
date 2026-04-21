@@ -257,7 +257,7 @@ void fail(const char *format, ...)
 static long pwm_actual_rate(long target_rate)
 {
 	int divi = CLOCK_HZ / PWM_FREQ;
-	long pwm_clock = CLOCK_HZ / divi;
+	long pwm_clock = 2 * CLOCK_HZ / divi;
 	uint32_t range = (PWM_FREQ * 2) / (uint32_t)target_rate;
 
 	return pwm_clock / range;
