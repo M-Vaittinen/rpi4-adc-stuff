@@ -236,8 +236,32 @@ void fail(const char *format, ...)
 	terminate(0);
 }
 
+/*
+ * Calculate the actual PWM pacing frequency for a given target sample rate.
+ *
+ * The PWM clock divider and the PWM range are both derived by integer
+ * (truncating) division, so the achieved pacing frequency may differ from
+ * the requested sample rate.
+ *
+ * Steps that mirror init_pwm() and the pwm_range formula in main():
+ *   1. divi      = CLOCK_HZ / PWM_FREQ          (integer, clock divider)
+ *   2. pwm_clock = CLOCK_HZ / divi              (actual PWM serialiser clock)
+ *   3. range     = (PWM_FREQ * 2) / target_rate (integer, PWM range register)
+ *   4. actual    = pwm_clock / range            (DREQ fires once per 'range'
+ *                                                PWM clock cycles)
+ *
+ * Returns the actual pacing frequency in Hz.
+ */
+static long pwm_actual_rate(long target_rate)
+{
+	int divi = CLOCK_HZ / PWM_FREQ;
+	long pwm_clock = CLOCK_HZ / divi;
+	uint32_t range = (PWM_FREQ * 2) / (uint32_t)target_rate;
 
-// Configure GPIO trigger pins for input
+	return pwm_clock / range;
+}
+
+/* Configure GPIO trigger pins for input */
 static void gpio_trigger_init(void)
 {
 	/* Configure trigger pin as input with pull-down resistor
@@ -626,6 +650,12 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 	}
+	/*
+	 * NOTE! These prints may be parsed by the adc_server.py!
+	 * Do not change without a warning!
+	 */
+	printf("Target sample-rate: %ld\n", sample_rate);
+	printf("Actual sample-rate: %ld\n", pwm_actual_rate(sample_rate));
 
 	pwm_range = (PWM_FREQ * 2) / sample_rate;
 
@@ -643,8 +673,7 @@ int main(int argc, char *argv[])
 	signal(SIGINT, terminate);
 	f = init_spi(SPI_FREQ);
 
-	printf("Streaming %u samples per block at %ld S/s, freq %d\n",
-	       MAX_SAMPS, sample_rate, f);
+	printf("Streaming, SPI SCLK %d Hz\n", f);
 	adc_dma_init(&vc_mem, MAX_SAMPS, 0, pwm_range);
 	adc_stream_start();
 	while (1)
