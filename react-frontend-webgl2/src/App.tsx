@@ -127,6 +127,11 @@ function App() {
   const { status, streaming, sendCommand } = useWebSocket({
     onData: handleData,
     adcMax,
+    onInfo: (msg) => {
+      if (msg.type === "actual_sample_rate" && typeof msg.value === "number") {
+        console.log("Actual sample-rate:", msg.value, "Hz");
+      }
+    },
   });
 
   const handleWheel = useCallback(
@@ -168,11 +173,11 @@ function App() {
         >
           {status}
         </strong>
-        <Separator orientation="vertical" />
+        {/* <Separator orientation="vertical" />
         elapsed:
         <strong>
           {elapsedMs === null ? "—" : (elapsedMs / 1000).toFixed(2) + " s"}
-        </strong>
+        </strong> */}
         {/* <Button
           onClick={() => {
             dataRef.current = generateSineData(5_000_000);
@@ -385,11 +390,11 @@ function App() {
               step={1000}
               value={sampleRate}
               onChange={(e) => setSampleRate(Number(e.target.value) || 1000)}
-              onBlur={(e) =>
-                Number(e.target.value) < 1000
-                  ? setSampleRate(1000)
-                  : setSampleRate(Number(e.target.value))
-              }
+              onBlur={(e) => {
+                const rounded =
+                  Math.round(Number(e.target.value) / 1000) * 1000;
+                setSampleRate(Math.max(1000, rounded));
+              }}
               className="w-24"
               disabled={streaming}
             />

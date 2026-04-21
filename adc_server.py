@@ -26,6 +26,7 @@ Run:      python adc_server.py
 """
 
 import asyncio
+import json
 import math
 import os
 import random
@@ -55,7 +56,7 @@ SHM_NAME = "/RPI_ADC_BUFF"
 MAX_SAMPS = mvaring.MAX_SAMPS if _MVARING_AVAILABLE else 1024
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-SERVER_PORT = int(os.environ.get("ADC_SERVER_PORT", "8765"))
+SERVER_PORT = int(os.environ.get("ADC_SERVER_PORT", "80"))
 # Force simulation if the env variable is set OR if mvaring is not available.
 USE_SIM     = (os.environ.get("ADC_USE_SIM", "").lower() in ("1", "true", "yes")
                or not _MVARING_AVAILABLE)
@@ -158,6 +159,23 @@ async def ws_handler(request):
     streamer_proc  = None
     stderr_task    = None
     watcher_task   = None
+    
+    
+    async def drain_stdout(proc):
+        """Drain rpi_adc_stream stdout; send actual sample rate to frontend when seen."""
+        try:
+            async for line in proc.stdout:
+                text = line.decode(errors="replace").rstrip()
+                if text.startswith("Actual sample-rate:"):
+                    _, _, val = text.partition(": ")
+                    try:
+                        rate = int(val)
+                        log.info("Actual sample-rate: %d Hz", rate)
+                        await ws.send_str(json.dumps({"type": "actual_sample_rate", "value": rate}))
+                    except ValueError:
+                        log.info("Actual sample-rate: %s Hz", val)
+        except asyncio.CancelledError:
+            pass
 
     async def log_stderr(proc):
         """Forward rpi_adc_stream stderr lines to web server logger."""
@@ -224,12 +242,18 @@ async def ws_handler(request):
                 return
 
         log.info("Opened ring buffer '%s'", SHM_NAME)
+        empty_log_counter = 0
         try:
             while True:
                 chunks = mvaring.read(handle, RING_READ_CHUNKS)
                 if not chunks:
                     await asyncio.sleep(0.001)  # ring empty — yield to event loop
+                    empty_log_counter += 1
+                    if empty_log_counter % 5000 == 0:  # log every ~5 s
+                        log.warning("Ring buffer still empty after %d polls (no data from rpi_adc_stream)",
+                                    empty_log_counter)
                     continue
+                empty_log_counter = 0
                 data = chunks_to_bytes(chunks)
                 # DEBUG: log first chunk's usecs and a few raw (byte-swapped) SPI words
                 usecs_val = struct.unpack_from("<I", data, 0)[0]
@@ -241,8 +265,8 @@ async def ws_handler(request):
                     swapped = ((raw16 & 0xFF) << 8 | (raw16 >> 8) & 0xFF) & 0xFFFF
                     adc_vals.append(swapped)
                 adc_str = " ".join(f"[{i}]={v}" for i, v in enumerate(adc_vals))
-                log.debug("chunks=%d usecs=%d %s bytes=%d",
-                          len(chunks), usecs_val, adc_str, len(data))
+                # log.debug("chunks=%d usecs=%d %s bytes=%d",
+                #           len(chunks), usecs_val, adc_str, len(data))
 
                 await ws.send_bytes(data)
         except asyncio.CancelledError:
@@ -290,18 +314,21 @@ async def ws_handler(request):
                     task = asyncio.create_task(stream_sim())
                     log.info("Streaming started (simulation)")
                 else:
-                    streamer_cmd = ["sudo", STREAMER_PROGRAM, "-c"]
+                    streamer_cmd = ["sudo", "stdbuf", "-o0", STREAMER_PROGRAM, "-c"]
                     if sample_rate is not None:
                         streamer_cmd += ["-r", str(sample_rate)]
                     streamer_proc = await asyncio.create_subprocess_exec(
                         *streamer_cmd,
-                        stdout=asyncio.subprocess.DEVNULL,
+                        stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                     )
                     log.info("Started rpi_adc_stream (pid %d)%s", streamer_proc.pid,
-                             f" at {sample_rate} Hz" if sample_rate else "")
+                             f" at {sample_rate} kHz" if sample_rate else "")
+
+                    # Now start tasks — log_stderr will pick up from where header reading left off
                     stderr_task = asyncio.create_task(log_stderr(streamer_proc))
                     watcher_task = asyncio.create_task(watch_streamer(streamer_proc))
+                    asyncio.create_task(drain_stdout(streamer_proc))
                     task = asyncio.create_task(stream_from_adc(streamer_proc))
                     log.info("Streaming started (ADC)")
 

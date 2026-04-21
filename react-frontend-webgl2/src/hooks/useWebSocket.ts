@@ -57,6 +57,8 @@ interface UseWebSocketParams {
   onData: (frame: ParsedFrame) => void;
   /** Bitmask derived from the selected ADC bit depth, e.g. 2047 (11-bit) or 4095 (12-bit). */
   adcMax?: number;
+  /** Called when the server sends a JSON info message (e.g. {type: "actual_sample_rate", value: 100000}). */
+  onInfo?: (msg: Record<string, unknown>) => void;
 }
 
 interface UseWebSocketReturn {
@@ -71,13 +73,14 @@ export function useWebSocket({
   url = WS_URL,
   onData,
   adcMax = DEFAULT_ADC_MAX,
+  onInfo,
 }: UseWebSocketParams): UseWebSocketReturn {
   const [status, setStatus] = useState<ConnectionStatus>("disconnected");
   const [streaming, setStreaming] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Refs so changes to onData/adcMax never trigger WS reconnection
+  // Refs so changes to onData/adcMax/onInfo never trigger WS reconnection
   const onDataRef = useRef(onData);
   useEffect(() => {
     onDataRef.current = onData;
@@ -86,6 +89,10 @@ export function useWebSocket({
   useEffect(() => {
     adcMaskRef.current = adcMax;
   }, [adcMax]);
+  const onInfoRef = useRef(onInfo);
+  useEffect(() => {
+    onInfoRef.current = onInfo;
+  }, [onInfo]);
 
   useEffect(() => {
     let cancelled = false;
@@ -116,8 +123,18 @@ export function useWebSocket({
 
       ws.onmessage = (e: MessageEvent) => {
         if (cancelled) return;
+        if (typeof e.data === "string") {
+          try {
+            const msg = JSON.parse(e.data) as Record<string, unknown>;
+            onInfoRef.current?.(msg);
+          } catch {
+            // ignore malformed text frames
+          }
+          return;
+        }
         if (!(e.data instanceof ArrayBuffer)) return;
         const frame = parseAdcFrame(e.data, adcMaskRef.current);
+
         if (frame.samples.length > 0) {
           // // DEBUG: mirror the Python [adc] log for comparison
           // const N_PREVIEW = 8;
