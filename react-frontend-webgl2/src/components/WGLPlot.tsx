@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { PlotData, View, HoverPhys } from "../types";
 import { VERT, FRAG, compileShader } from "../utils/glsl";
-import { PAD, drawAxes, drawCrosshair } from "../utils/plotDraw";
+import { PAD, drawAxes, drawCrosshair, drawOverlays } from "../utils/plotDraw";
 import { getThemeColors } from "../utils/themeColors";
 import { INIT_GPU_CAP, ZOOM_FACTOR, MIN_VISIBLE } from "../config/constants";
 
@@ -367,8 +367,6 @@ export function WGLPlot({
           colors,
           dataRef.current.chunkUsecs,
           dataRef.current.chunkCount,
-          actualSampleRateRef.current,
-          sampleRate,
         );
       }
 
@@ -388,6 +386,16 @@ export function WGLPlot({
           colors,
           dataRef.current.chunkUsecs,
           dataRef.current.chunkCount,
+        );
+        drawOverlays(
+          ctxHover,
+          W,
+          H,
+          dpr,
+          dataRef.current.count,
+          actualSampleRateRef.current,
+          sampleRate,
+          colors,
         );
       }
 

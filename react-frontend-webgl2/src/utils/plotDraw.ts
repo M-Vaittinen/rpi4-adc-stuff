@@ -133,8 +133,6 @@ export function drawAxes(
   colors: ThemeColors,
   chunkUsecs: Float64Array,
   chunkCount: number,
-  actualSampleRate: number | null,
-  sampleRate: number,
 ): void {
   const pl = PAD.l * dpr,
     pb = PAD.b * dpr,
@@ -162,6 +160,9 @@ export function drawAxes(
   const fs = 11 * dpr;
   ctx.font = `${fs}px monospace`;
   ctx.fillStyle = colors.foreground;
+  ctx.strokeStyle = "black";
+  ctx.lineWidth = 3 * dpr;
+  ctx.lineJoin = "round";
 
   // Y-axis labels
   const yLabels = [0, 0.25, 0.5, 0.75, 1].map((f) => Math.round(f * adcMax));
@@ -169,11 +170,16 @@ export function drawAxes(
   ctx.textBaseline = "middle";
   for (const v of yLabels) {
     const py = pt + ph * (1 - v / adcMax);
+    ctx.strokeText(String(v), pl - 5 * dpr, py);
     ctx.fillText(String(v), pl - 5 * dpr, py);
     ctx.beginPath();
     ctx.moveTo(pl - 3 * dpr, py);
     ctx.lineTo(pl, py);
+    ctx.strokeStyle = colors.border;
+    ctx.lineWidth = dpr;
     ctx.stroke();
+    ctx.strokeStyle = "black";
+    ctx.lineWidth = 3 * dpr;
   }
 
   // X-axis labels — Saleae-style: absolute time at major boundaries, relative offsets between
@@ -230,8 +236,13 @@ export function drawAxes(
 
       ctx.textAlign = frac < 0.05 ? "left" : frac > 0.95 ? "right" : "center";
       ctx.fillStyle = isAnchor ? colors.foreground : colors.foreground40;
+      ctx.strokeStyle = "black";
+      ctx.lineWidth = 3 * dpr;
+      ctx.strokeText(label, px, pt + ph + (isAnchor ? 18 : 4) * dpr);
       ctx.fillText(label, px, pt + ph + (isAnchor ? 18 : 4) * dpr);
       ctx.fillStyle = colors.foreground;
+      ctx.strokeStyle = colors.border;
+      ctx.lineWidth = dpr;
       ctx.beginPath();
       ctx.moveTo(px, pt + ph);
       ctx.lineTo(px, pt + ph + (isAnchor ? 5 : 3) * dpr);
@@ -243,7 +254,12 @@ export function drawAxes(
       const px = pl + ((xi - xMin) / xRange) * pw;
       const frac = (xi - xMin) / xRange;
       ctx.textAlign = frac < 0.05 ? "left" : frac > 0.95 ? "right" : "center";
+      ctx.strokeStyle = "black";
+      ctx.lineWidth = 3 * dpr;
+      ctx.strokeText(formatSampleIdx(xi), px, pt + ph + 4 * dpr);
       ctx.fillText(formatSampleIdx(xi), px, pt + ph + 4 * dpr);
+      ctx.strokeStyle = colors.border;
+      ctx.lineWidth = dpr;
       ctx.beginPath();
       ctx.moveTo(px, pt + ph);
       ctx.lineTo(px, pt + ph + 3 * dpr);
@@ -251,12 +267,36 @@ export function drawAxes(
     }
   }
 
+  ctx.restore();
+}
+
+export function drawOverlays(
+  ctx: CanvasRenderingContext2D,
+  W: number,
+  H: number,
+  dpr: number,
+  count: number,
+  actualSampleRate: number | null,
+  sampleRate: number,
+  colors: ThemeColors,
+): void {
+  const pl = PAD.l * dpr,
+    pb = PAD.b * dpr,
+    pt = PAD.t * dpr,
+    pr = PAD.r * dpr;
+  const pw = W - pl - pr;
+  const ph = H - pt - pb;
+
+  ctx.save();
+  const fs = 11 * dpr;
+  ctx.font = `${fs}px monospace`;
+  ctx.lineJoin = "round";
+
   // Sample count watermark
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
   ctx.strokeStyle = "black";
   ctx.lineWidth = 3 * dpr;
-  ctx.lineJoin = "round";
   const watermark = `n = ${count.toLocaleString()}`;
   const wx = pl + 4 * dpr;
   const wy = pt + 2 * dpr;
@@ -269,7 +309,6 @@ export function drawAxes(
     ctx.textBaseline = "bottom";
     ctx.strokeStyle = "black";
     ctx.lineWidth = 3 * dpr;
-    ctx.lineJoin = "round";
     const srLabel = `actual sample rate = ${actualSampleRate.toLocaleString()} Hz`;
     const rx = pl + pw - 4 * dpr;
     const ry = pt + ph - 2 * dpr;
