@@ -180,6 +180,8 @@ static struct adc_data g_tmp_data;
 
 static uint32_t *g_rx_buff = g_tmp_data.samples;
 
+static bool g_halt_when_full;
+
 // Virtual memory pointers to acceess peripherals & memory
 extern MEM_MAP gpio_regs, dma_regs, clk_regs, pwm_regs;
 MEM_MAP vc_mem, spi_regs, usec_regs;
@@ -486,28 +488,30 @@ static int adc_stream_csv(MEM_MAP *mp, char *vals, int maxlen, int nsamp, struct
 			g_tmp_data.usecs = usec-g_usec_start;
 
 			/* When ring is full, stop ADC but keep shared memory alive for consumers */
-/*			if (ring_add(mr, &g_tmp_data, true)) {
-				printf("\nRing buffer full, stopping ADC capture\n");
-				printf("Shared memory preserved for consumers to drain buffer.\n");
-				printf("Type 'quit' or 'q' and press Enter to exit: ");
-				
-				char cmd[32];
-				while (fgets(cmd, sizeof(cmd), stdin)) {
-					if (strncmp(cmd, "quit", 4) == 0 || cmd[0] == 'q') {
-						printf("Exiting...\n");
-						terminate(0);
-					}
+			if (g_halt_when_full) {
+				if (ring_add(mr, &g_tmp_data, true)) {
+					printf("\nRing buffer full, stopping ADC capture\n");
+					printf("Shared memory preserved for consumers to drain buffer.\n");
 					printf("Type 'quit' or 'q' and press Enter to exit: ");
+				
+					char cmd[32];
+					while (fgets(cmd, sizeof(cmd), stdin)) {
+						if (strncmp(cmd, "quit", 4) == 0 || cmd[0] == 'q') {
+							printf("Exiting...\n");
+							terminate(0);
+						}
+						printf("Type 'quit' or 'q' and press Enter to exit: ");
+					}
 				}
-			} */
-			if (-ENOSPC == ring_add(mr, &g_tmp_data, false)) {
-				static unsigned long dropped_chunks = 0;
+			} else {
+				if (-ENOSPC == ring_add(mr, &g_tmp_data, false)) {
+					static unsigned long dropped_chunks = 0;
 
-				dropped_chunks++;
-				if ((uint8_t)dropped_chunks == 1)
-					printf("ring-full: dropped %lu data-chunks\n", dropped_chunks);
+					dropped_chunks++;
+					if ((uint8_t)dropped_chunks == 1)
+						printf("ring-full: dropped %lu data-chunks\n", dropped_chunks);
+				}
 			}
-
 		}
 	}
 	vals[slen] = 0;
@@ -575,6 +579,7 @@ static void print_usage(const char *prog_name)
 	printf("  -r  --rate-ksps        Sampling frequency in kHz, default %llu\n", SAMPLE_RATE / 1000);
 	printf("  -c  --create-shm       Create the shared-memory buffer and start reading\n");
 	printf("  -h, --help             Show this help message\n\n");
+	printf("  -H, --halt-when-full   Debug option; Halt when ring-buffer gets full\n");
 	printf("Output data to 'mvaring' type ring buffer in shared memory\n");
 	printf("Raw shared memery is in '/dev/shm%s'\n", SHM_NAME);
 	printf("See the data-format from mvaring.h\n");
@@ -612,10 +617,11 @@ int shm_try_open(struct shmem_info *shi, struct mvaring **mr)
 int main(int argc, char *argv[])
 {
 	static struct option long_options[] = {
-		{"rate-ksps",	required_argument,	NULL, 'r'},
-		{"create-shm",	no_argument,		NULL, 'c'},
-		{"help",	no_argument,		NULL, 'h'},
-		{NULL,           0,                 NULL, 0}
+		{"rate-ksps",		required_argument,	NULL, 'r'},
+		{"create-shm",		no_argument,		NULL, 'c'},
+		{"help",		no_argument,		NULL, 'h'},
+		{"halt-when-full",	no_argument,		NULL, 'H'},
+		{NULL,           	0,			NULL, 0}
 	};
 	long int sample_rate = SAMPLE_RATE;
 	uint32_t pwm_range;
@@ -628,7 +634,7 @@ int main(int argc, char *argv[])
 
 
 	/* Parse command line arguments */
-	while ((opt = getopt_long(argc, argv, "chr:", long_options, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "chHr:", long_options, NULL)) != -1) {
 		switch (opt) {
 		case 'c':
 			create_shm = true;
@@ -636,6 +642,9 @@ int main(int argc, char *argv[])
 		case 'h':
 			print_usage(argv[0]);
 			return 0;
+		case 'H':
+			g_halt_when_full = true;
+			break;
 		case 'r':
 			sample_rate = strtol(optarg, NULL, 10) * 1000;
 			if (sample_rate * 1000 < 1 || sample_rate > MAX_SAMPLE_RATE) {
