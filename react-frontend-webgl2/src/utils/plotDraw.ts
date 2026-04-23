@@ -49,7 +49,7 @@ function timeUnit(rangeUs: number): [number, string] {
 }
 
 function formatTime(us: number, mult: number, unit: string): string {
-  return (us * mult).toFixed(2) + " " + unit;
+  return (us * mult).toFixed(2).replace(/\.?0+$/, "") + " " + unit;
 }
 
 function formatSampleIdx(idx: number): string {
@@ -226,10 +226,14 @@ export function drawAxes(
       let label: string;
       const frac = (xi - xMin) / xRange;
       if (isAnchor) {
+        // Anchor label: absolute time of the major boundary, e.g. "1.00 ms"
+        // Drawn lower on the axis to visually separate it from offset labels
         label = formatTime(majorBoundaryUs, absMult, absUnit);
         prevMajorIdx = majorIdx;
         anchorTAbs = tAbs; // record actual time of this grid line as the offset base
       } else {
+        // Offset label: time elapsed since the last anchor, e.g. "+10.00 µs"
+        // Dimmed and drawn higher so anchors stand out
         const delta = tAbs - anchorTAbs;
         label = "+" + formatTime(delta, deltaMult, deltaUnit);
       }
@@ -245,7 +249,7 @@ export function drawAxes(
       ctx.lineWidth = dpr;
       ctx.beginPath();
       ctx.moveTo(px, pt + ph);
-      ctx.lineTo(px, pt + ph + (isAnchor ? 5 : 3) * dpr);
+      ctx.lineTo(px, pt + ph + (isAnchor ? 5 : 3) * dpr); // longer tick for anchors
       ctx.stroke();
     }
   } else {
@@ -305,6 +309,7 @@ export function drawOverlays(
   ctx.fillText(watermark, wx, wy);
 
   if (actualSampleRate !== null && actualSampleRate !== sampleRate) {
+    // Actual sample rate mismatch warning — pulses red when rate differs from requested
     ctx.textAlign = "right";
     ctx.textBaseline = "bottom";
     ctx.strokeStyle = "black";

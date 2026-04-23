@@ -5,6 +5,7 @@ import {
   CHUNK_BYTES,
   DEFAULT_ADC_MAX,
 } from "../config/constants";
+import type { Command, ServerMessage } from "../types/commands";
 
 type ConnectionStatus = "connected" | "disconnected" | "error";
 
@@ -57,14 +58,14 @@ interface UseWebSocketParams {
   onData: (frame: ParsedFrame) => void;
   /** Bitmask derived from the selected ADC bit depth, e.g. 2047 (11-bit) or 4095 (12-bit). */
   adcMax?: number;
-  /** Called when the server sends a JSON info message (e.g. {type: "actual_sample_rate", value: 100000}). */
-  onInfo?: (msg: Record<string, unknown>) => void;
+  /** Called when the server sends a JSON info message. */
+  onInfo?: (msg: ServerMessage) => void;
 }
 
 interface UseWebSocketReturn {
   status: ConnectionStatus;
   streaming: boolean;
-  sendCommand: (cmd: string) => void;
+  sendCommand: (cmd: Command) => void;
 }
 
 const RECONNECT_INTERVAL_MS = 2000;
@@ -80,6 +81,7 @@ export function useWebSocket({
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Refs so changes to onData/adcMax/onInfo never trigger WS reconnection
   const onDataRef = useRef(onData);
   useEffect(() => {
@@ -125,7 +127,10 @@ export function useWebSocket({
         if (cancelled) return;
         if (typeof e.data === "string") {
           try {
-            const msg = JSON.parse(e.data) as Record<string, unknown>;
+            const msg = JSON.parse(e.data) as ServerMessage;
+            if (msg.type === "stopped") {
+              setStreaming(false);
+            }
             onInfoRef.current?.(msg);
           } catch {
             // ignore malformed text frames
@@ -160,12 +165,13 @@ export function useWebSocket({
     };
   }, [url]);
 
-  const sendCommand = useCallback((cmd: string) => {
+  const sendCommand = useCallback((cmd: Command) => {
     if (wsRef.current?.readyState !== WebSocket.OPEN) return;
-    wsRef.current.send(cmd);
-    if (cmd.startsWith("start")) {
+    wsRef.current.send(JSON.stringify(cmd));
+    if (cmd.command === "start") {
       setStreaming(true);
     } else {
+      // Immediate UI fallback; authoritative false comes from { type: "stopped" }
       setStreaming(false);
     }
   }, []);

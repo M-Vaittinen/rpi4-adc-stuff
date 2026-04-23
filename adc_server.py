@@ -32,6 +32,7 @@ import os
 import random
 import struct
 import sys
+import time
 import logging
 from pathlib import Path
 from aiohttp import web
@@ -159,6 +160,8 @@ async def ws_handler(request):
     streamer_proc  = None
     stderr_task    = None
     watcher_task   = None
+    duration_task  = None
+    t_stream_start = None
     
     
     async def drain_stdout(proc):
@@ -292,30 +295,53 @@ async def ws_handler(request):
         except asyncio.CancelledError:
             pass
 
+    async def duration_watcher(duration_ms: float, t_start: float):
+        """Stop streaming automatically after the requested duration."""
+        nonlocal streaming, task, streamer_proc, stderr_task, watcher_task
+        try:
+            await asyncio.sleep(duration_ms / 1000)
+            elapsed_ms = (time.perf_counter() - t_start) * 1000
+            streaming = False
+            if task:
+                task.cancel()
+                await task
+                task = None
+            await kill_streamer(streamer_proc, stderr_task, watcher_task)
+            streamer_proc = None
+            stderr_task = None
+            watcher_task = None
+            await ws.send_str(json.dumps({
+                "type": "stopped",
+                "actualDurationMs": round(elapsed_ms, 2),
+            }))
+            log.info("Duration-triggered stop after %.1f ms", elapsed_ms)
+        except asyncio.CancelledError:
+            pass  # manual stop arrived first — it will send its own confirmation
+
     try:
         async for msg in ws:
             from aiohttp import WSMsgType
             if msg.type != WSMsgType.TEXT:
                 continue
 
-            cmd = msg.data.strip()
-            parts = cmd.split()
-            cmd_name = parts[0].lower()
+            try:
+                data = json.loads(msg.data)
+                cmd_name = data["command"]
+            except (json.JSONDecodeError, KeyError):
+                await ws.send_str(json.dumps({"type": "error", "message": "Invalid command"}))
+                continue
 
             if cmd_name == "start" and not streaming:
-                sample_rate = None
-                if len(parts) > 1:
-                    try:
-                        sample_rate = int(parts[1]) // 1000  # frontend sends Hz; -r expects kHz
-                    except ValueError:
-                        log.warning("Invalid sample rate '%s', ignoring", parts[1])
+                sample_rate = data.get("sampleRate", 0) // 1000  # frontend sends Hz; -r expects kHz
+                duration_ms = data.get("durationMs")  # None = stream indefinitely
+                t_stream_start = time.perf_counter()
                 streaming = True
                 if USE_SIM:
                     task = asyncio.create_task(stream_sim())
                     log.info("Streaming started (simulation)")
                 else:
                     streamer_cmd = ["sudo", "stdbuf", "-o0", STREAMER_PROGRAM, "-c"]
-                    if sample_rate is not None:
+                    if sample_rate:
                         streamer_cmd += ["-r", str(sample_rate)]
                     streamer_proc = await asyncio.create_subprocess_exec(
                         *streamer_cmd,
@@ -331,8 +357,18 @@ async def ws_handler(request):
                     asyncio.create_task(drain_stdout(streamer_proc))
                     task = asyncio.create_task(stream_from_adc(streamer_proc))
                     log.info("Streaming started (ADC)")
+                await ws.send_str(json.dumps({"type": "started"}))
+                if duration_ms is not None:
+                    duration_task = asyncio.create_task(
+                        duration_watcher(duration_ms, t_stream_start)
+                    )
 
             elif cmd_name == "stop" and streaming:
+                t_elapsed_ms = (time.perf_counter() - t_stream_start) * 1000 if t_stream_start else 0
+                if duration_task and not duration_task.done():
+                    duration_task.cancel()
+                    await asyncio.gather(duration_task, return_exceptions=True)
+                duration_task = None
                 streaming = False
                 if task:
                     task.cancel()
@@ -342,11 +378,18 @@ async def ws_handler(request):
                 streamer_proc = None
                 stderr_task = None
                 watcher_task = None
-                log.info("Streaming stopped")
+                await ws.send_str(json.dumps({
+                    "type": "stopped",
+                    "actualDurationMs": round(t_elapsed_ms, 2),
+                }))
+                log.info("Streaming stopped (manual, %.1f ms)", t_elapsed_ms)
 
     except Exception as exc:
         log.error("WS error: %s", exc)
     finally:
+        if duration_task and not duration_task.done():
+            duration_task.cancel()
+            await asyncio.gather(duration_task, return_exceptions=True)
         if task:
             task.cancel()
             try:
@@ -402,8 +445,18 @@ async def main():
     if not DIST_DIR.is_dir():
         log.warning("'%s' not found - run `npm run build` first", DIST_DIR)
 
-    await asyncio.Event().wait()
+    try:
+        await asyncio.Event().wait()
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        pass
+    finally:
+        log.info("Shutting down...")
+        await runner.cleanup()   
+        log.info("Server stopped cleanly")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass 

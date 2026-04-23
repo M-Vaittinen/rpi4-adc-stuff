@@ -38,8 +38,8 @@ import {
   LIVE_WINDOW_MAX,
   LIVE_WINDOW_STEP_SIZE,
   ADC_OPTIONS,
-  NOT_IMPLEMENTED,
   APP_VERSION,
+  NOT_IMPLEMENTED,
 } from "@/config/constants";
 import { toast } from "sonner";
 
@@ -63,6 +63,8 @@ function App() {
   const [sampleRate, setSampleRate] = useState(DEFAULT_SAMPLE_RATE);
   const [actualSampleRate, setActualSampleRate] = useState<number | null>(null);
   const [adcMax, setAdcMax] = useState<number>(DEFAULT_ADC_MAX);
+  // null = continuous, otherwise duration in ms
+  const [durationMs, setDurationMs] = useState<number | null>(null);
 
   // const [elapsedMs, setElapsedMs] = useState<number | null>(null);
   // const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -129,7 +131,7 @@ function App() {
     onData: handleData,
     adcMax,
     onInfo: (msg) => {
-      if (msg.type === "actual_sample_rate" && typeof msg.value === "number") {
+      if (msg.type === "actual_sample_rate") {
         console.log("Actual sample-rate:", msg.value, "Hz");
         setActualSampleRate(msg.value);
       }
@@ -266,7 +268,10 @@ function App() {
 
       <div className="mt-2 flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
-          <Select defaultValue="0">
+          <Select
+            value={durationMs === null ? "0" : String(durationMs)}
+            onValueChange={(v) => setDurationMs(v === "0" ? null : Number(v))}
+          >
             <SelectTrigger
               className="w-32"
               data-slot="input-group-control"
@@ -274,13 +279,22 @@ function App() {
             >
               <SelectValue placeholder="Duration" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent position="popper">
               <SelectItem value="0">Continuous</SelectItem>
-              <SelectItem disabled={NOT_IMPLEMENTED} value="1">
-                1 second (example)
+              <SelectItem disabled value="1000">
+                1 second
               </SelectItem>
-              <SelectItem disabled={NOT_IMPLEMENTED} value="2">
-                2 seconds (example)
+              <SelectItem disabled value="2000">
+                2 seconds
+              </SelectItem>
+              <SelectItem disabled value="5000">
+                5 seconds
+              </SelectItem>
+              <SelectItem disabled value="10000">
+                10 seconds
+              </SelectItem>
+              <SelectItem disabled value="30000">
+                30 seconds
               </SelectItem>
             </SelectContent>
           </Select>
@@ -289,7 +303,11 @@ function App() {
             title="Start streaming"
             disabled={streaming || status != "connected"}
             onClick={() => {
-              sendCommand(`start ${sampleRate}`);
+              sendCommand({
+                command: "start",
+                sampleRate,
+                ...(durationMs !== null && { durationMs }),
+              });
               // startTimer();
             }}
           >
@@ -299,7 +317,7 @@ function App() {
             title="Stop streaming"
             disabled={!streaming}
             onClick={() => {
-              sendCommand("stop");
+              sendCommand({ command: "stop" });
               // stopTimer();
             }}
           >
