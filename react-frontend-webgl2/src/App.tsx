@@ -39,7 +39,6 @@ import {
   LIVE_WINDOW_STEP_SIZE,
   ADC_OPTIONS,
   APP_VERSION,
-  NOT_IMPLEMENTED,
 } from "@/config/constants";
 import { toast } from "sonner";
 
@@ -279,23 +278,18 @@ function App() {
             >
               <SelectValue placeholder="Duration" />
             </SelectTrigger>
-            <SelectContent position="popper">
+            <SelectContent
+              position="popper"
+              className="max-h-60 overflow-y-auto"
+            >
               <SelectItem value="0">Continuous</SelectItem>
-              <SelectItem disabled value="1000">
-                1 second
-              </SelectItem>
-              <SelectItem disabled value="2000">
-                2 seconds
-              </SelectItem>
-              <SelectItem disabled value="5000">
-                5 seconds
-              </SelectItem>
-              <SelectItem disabled value="10000">
-                10 seconds
-              </SelectItem>
-              <SelectItem disabled value="30000">
-                30 seconds
-              </SelectItem>
+              {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(
+                (seconds) => (
+                  <SelectItem key={seconds} value={String(seconds * 1000 + 50)}>
+                    {seconds} seconds
+                  </SelectItem>
+                ),
+              )}
             </SelectContent>
           </Select>
           <Button
