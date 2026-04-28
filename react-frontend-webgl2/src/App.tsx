@@ -1,29 +1,18 @@
 import { useRef, useCallback, useState, type WheelEvent } from "react";
-import type { PlotData } from "./types";
+import type { PlotData, YScale } from "./types";
 import { useWebSocket, type ParsedFrame } from "./hooks/useWebSocket";
 import { WGLPlot } from "./components/WGLPlot";
 import { StatusDot } from "./components/StatusDot";
+import { PlotterControls } from "./components/PlotterControls";
 // import { generateSineData } from "./utils/sineData";
 import { saveCanvasesAsImage } from "./utils/saveImage";
 import { saveAsCsv } from "./utils/saveCsv";
 import { loadCsvFile } from "./utils/loadCsv";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Slider } from "@/components/ui/slider";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+
 import { Separator } from "@/components/ui/separator";
 import { Toaster } from "@/components/ui/sonner";
 import {
-  PlayIcon,
-  StopIcon,
   FloppyDiskIcon,
   UploadSimpleIcon,
   DownloadSimpleIcon,
@@ -37,10 +26,11 @@ import {
   LIVE_WINDOW_MIN,
   LIVE_WINDOW_MAX,
   LIVE_WINDOW_STEP_SIZE,
-  ADC_OPTIONS,
   APP_VERSION,
+  DEFAULT_REF_VOLTAGE,
 } from "@/config/constants";
 import { toast } from "sonner";
+import { SettingsSheet } from "./components/SettingsSheet";
 
 // shadcn preset: --preset b4hIZmq00
 
@@ -62,8 +52,11 @@ function App() {
   const [sampleRate, setSampleRate] = useState(DEFAULT_SAMPLE_RATE);
   const [actualSampleRate, setActualSampleRate] = useState<number | null>(null);
   const [adcMax, setAdcMax] = useState<number>(DEFAULT_ADC_MAX);
+  const [refVoltage, setRefVoltage] = useState<number>(DEFAULT_REF_VOLTAGE);
   // null = continuous, otherwise duration in ms
   const [durationMs, setDurationMs] = useState<number | null>(null);
+  // y-scale: "voltage" | "raw"
+  const [yScale, setYScale] = useState<YScale>("raw");
 
   // const [elapsedMs, setElapsedMs] = useState<number | null>(null);
   // const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -263,157 +256,40 @@ function App() {
         live={live}
         fitAll={fitAll}
         windowSize={windowSize}
+        plotMode="fft"
+        y_scale={yScale}
+        voltageRef={refVoltage}
       />
 
       <div className="mt-2 flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2">
-          <Select
-            value={durationMs === null ? "0" : String(durationMs)}
-            onValueChange={(v) => setDurationMs(v === "0" ? null : Number(v))}
-          >
-            <SelectTrigger
-              className="w-32"
-              data-slot="input-group-control"
-              title="Select amount of time for plotting"
-            >
-              <SelectValue placeholder="Duration" />
-            </SelectTrigger>
-            <SelectContent
-              position="popper"
-              className="max-h-60 overflow-y-auto"
-            >
-              <SelectItem value="0">Continuous</SelectItem>
-              {Array.from({ length: 20 }, (_, i) => (i + 1) * 5).map(
-                (seconds) => (
-                  <SelectItem key={seconds} value={String(seconds * 1000 + 50)}>
-                    {seconds} seconds
-                  </SelectItem>
-                ),
-              )}
-            </SelectContent>
-          </Select>
-          <Button
-            variant="green"
-            title="Start streaming"
-            disabled={streaming || status != "connected"}
-            onClick={() => {
-              sendCommand({
-                command: "start",
-                sampleRate,
-                ...(durationMs !== null && { durationMs }),
-              });
-              // startTimer();
-            }}
-          >
-            <PlayIcon data-icon="inline-start" />
-          </Button>
-          <Button
-            title="Stop streaming"
-            disabled={!streaming}
-            onClick={() => {
-              sendCommand({ command: "stop" });
-              // stopTimer();
-            }}
-          >
-            <StopIcon data-icon="inline-start" />
-          </Button>
-          <Separator orientation="vertical" className="h-6" />
-          <Button variant="secondary" onClick={handleClear}>
-            Clear
-          </Button>
-        </div>
-
-        <Separator orientation="vertical" className="h-6" />
-
-        <div className="flex items-center gap-2">
-          <Label
-            title="Lock view to the latest N samples and auto-scroll as new data arrives"
-            className="gap-1.5"
-          >
-            <Checkbox
-              checked={live}
-              onCheckedChange={(checked) => setLive(checked === true)}
-            />
-            Live
-          </Label>
-          <Label
-            title="Always show all recorded data while streaming (zoom/pan disabled)"
-            className="gap-1.5"
-          >
-            <Checkbox
-              checked={fitAll}
-              disabled={!live}
-              onCheckedChange={(checked) => setFitAll(checked === true)}
-            />
-            Fit all
-          </Label>
-          <Slider
-            title="Live window size"
-            value={[windowSize]}
-            onValueChange={([v]) => setWindowSize(v)}
-            min={LIVE_WINDOW_MIN}
-            max={LIVE_WINDOW_MAX}
-            step={LIVE_WINDOW_STEP_SIZE}
-            disabled={!live || fitAll}
-            className="w-32"
-          />
-          <Input
-            id="window-size-input"
-            type="number"
-            min={LIVE_WINDOW_MIN}
-            max={LIVE_WINDOW_MAX}
-            step={LIVE_WINDOW_STEP_SIZE}
-            value={[windowSize].toString()}
-            disabled={!live || fitAll}
-            onChange={(e) =>
-              setWindowSize(Number(e.target.value) || LIVE_WINDOW_MIN)
-            }
-            className="w-24"
-          />
-          <span className="text-xs text-muted-foreground">samples</span>
-        </div>
+        <PlotterControls
+          durationMs={durationMs}
+          setDurationMs={setDurationMs}
+          streaming={streaming}
+          status={status}
+          sendCommand={sendCommand}
+          sampleRate={sampleRate}
+          handleClear={handleClear}
+          live={live}
+          setLive={setLive}
+          fitAll={fitAll}
+          setFitAll={setFitAll}
+          windowSize={windowSize}
+          setWindowSize={setWindowSize}
+        />
 
         <div className="ml-auto flex items-center gap-2">
-          <div
-            title="Select ADC bit resolution"
-            className="flex items-center gap-1.5 text-xs"
-          >
-            ADC
-            <Select
-              value={String(adcMax)}
-              onValueChange={(v) => setAdcMax(Number(v))}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {ADC_OPTIONS.map((opt) => (
-                  <SelectItem key={opt.value} value={String(opt.value)}>
-                    {opt.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <Separator orientation="vertical" className="h-6" />
-          <Label className="gap-1.5" title="Sample rate">
-            sample rate (S/s)
-            <Input
-              id="samplerate"
-              type="number"
-              min={1000}
-              step={1000}
-              value={sampleRate}
-              onChange={(e) => setSampleRate(Number(e.target.value) || 1000)}
-              onBlur={(e) => {
-                const rounded =
-                  Math.round(Number(e.target.value) / 1000) * 1000;
-                setSampleRate(Math.max(1000, rounded));
-              }}
-              className="w-24"
-              disabled={streaming}
-            />
-          </Label>
+          <SettingsSheet
+            adcMax={adcMax}
+            setAdcMax={setAdcMax}
+            refVoltage={refVoltage}
+            setRefVoltage={setRefVoltage}
+            sampleRate={sampleRate}
+            setSampleRate={setSampleRate}
+            streaming={streaming}
+            yScale={yScale}
+            setYScale={setYScale}
+          />
         </div>
       </div>
       <Toaster />

@@ -1,4 +1,4 @@
-import type { View, HoverPhys } from "../types";
+import type { View, HoverPhys, YScale } from "../types";
 import type { ThemeColors } from "./themeColors";
 import { MAX_SAMPS } from "../config/constants";
 
@@ -133,6 +133,8 @@ export function drawAxes(
   colors: ThemeColors,
   chunkUsecs: Float64Array,
   chunkCount: number,
+  y_scale: YScale,
+  voltage: number,
 ): void {
   const pl = PAD.l * dpr,
     pb = PAD.b * dpr,
@@ -170,8 +172,14 @@ export function drawAxes(
   ctx.textBaseline = "middle";
   for (const v of yLabels) {
     const py = pt + ph * (1 - v / adcMax);
-    ctx.strokeText(String(v), pl - 5 * dpr, py);
-    ctx.fillText(String(v), pl - 5 * dpr, py);
+
+    const label =
+      y_scale === "voltage"
+        ? `${((v / adcMax) * voltage).toFixed(2)}V`
+        : String(v);
+
+    ctx.strokeText(label, pl - 5 * dpr, py);
+    ctx.fillText(label, pl - 5 * dpr, py);
     ctx.beginPath();
     ctx.moveTo(pl - 3 * dpr, py);
     ctx.lineTo(pl, py);
@@ -341,6 +349,8 @@ export function drawCrosshair(
   colors: ThemeColors,
   chunkUsecs: Float64Array,
   chunkCount: number,
+  y_scale: YScale,
+  voltage: number,
 ): void {
   const pl = PAD.l * dpr,
     _pb = PAD.b * dpr,
@@ -398,12 +408,17 @@ export function drawCrosshair(
   const baseUs = sampleToUsecs(0, chunkUsecs, chunkCount);
   const tUs = sampleToUsecs(sampleIdx, chunkUsecs, chunkCount);
   let label: string;
+  const yDisplay =
+    y_scale === "voltage"
+      ? `${((yVal / adcMax) * voltage).toFixed(3)}V`
+      : String(Math.round(yVal));
+
   if (baseUs !== null && tUs !== null) {
     const relUs = tUs - baseUs;
     const [mult, unit] = timeUnit(relUs || 1);
-    label = `t: ${formatTime(relUs, mult, unit)}  y: ${Math.round(yVal)}`;
+    label = `t: ${formatTime(relUs, mult, unit)}  y: ${yDisplay}`;
   } else {
-    label = `x: ${sampleIdx}  y: ${Math.round(yVal)}`;
+    label = `x: ${sampleIdx}  y: ${yDisplay}`;
   }
   const tw = ctx.measureText(label).width + 14 * dpr;
   const th = fs + 10 * dpr;

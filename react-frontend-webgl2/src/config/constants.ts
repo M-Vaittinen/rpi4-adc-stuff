@@ -31,3 +31,10 @@ export const ADC_OPTIONS = [
   { label: "12-bit", value: 4095 },
 ] as const;
 export const DEFAULT_ADC_MAX = ADC_OPTIONS[1].value;
+
+export const REF_VOLTAGE_OPTIONS = [
+  { label: "3.3V", value: 3.3 },
+  { label: "5.0V", value: 5.0 },
+];
+
+export const DEFAULT_REF_VOLTAGE = REF_VOLTAGE_OPTIONS[0].value;

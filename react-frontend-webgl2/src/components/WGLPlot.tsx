@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { PlotData, View, HoverPhys } from "../types";
+import type { PlotData, View, HoverPhys, PlotModes, YScale } from "../types";
 import { VERT, FRAG, compileShader } from "../utils/glsl";
 import { PAD, drawAxes, drawCrosshair, drawOverlays } from "../utils/plotDraw";
 import { getThemeColors } from "../utils/themeColors";
@@ -17,6 +17,9 @@ interface WGLPlotProps {
   adcMax?: number;
   live?: boolean;
   windowSize?: number;
+  plotMode: PlotModes;
+  y_scale: YScale;
+  voltageRef: number;
   /** When true, always show the full data range and ignore zoom/pan. */
   fitAll?: boolean;
   onWheel?: (e: React.WheelEvent<HTMLDivElement>) => void;
@@ -33,6 +36,9 @@ export function WGLPlot({
   live = false,
   windowSize = 50_000,
   fitAll = false,
+  plotMode = "time",
+  y_scale = "raw",
+  voltageRef = 3.3,
   onWheel,
 }: WGLPlotProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -367,6 +373,8 @@ export function WGLPlot({
           colors,
           dataRef.current.chunkUsecs,
           dataRef.current.chunkCount,
+          y_scale,
+          voltageRef,
         );
       }
 
@@ -386,6 +394,8 @@ export function WGLPlot({
           colors,
           dataRef.current.chunkUsecs,
           dataRef.current.chunkCount,
+          y_scale,
+          voltageRef,
         );
         drawOverlays(
           ctxHover,
@@ -421,7 +431,7 @@ export function WGLPlot({
       axisCanvas.remove();
       hoverCanvas.remove();
     };
-  }, [dataRef, live, windowSize, sampleRate, adcMax]);
+  }, [dataRef, live, windowSize, sampleRate, adcMax, y_scale, voltageRef]);
 
   return (
     <div
