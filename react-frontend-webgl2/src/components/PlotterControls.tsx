@@ -17,13 +17,15 @@ import {
   LIVE_WINDOW_MAX,
   LIVE_WINDOW_STEP_SIZE,
 } from "@/config/constants";
+import type { PlotModes } from "@/types";
+import type { Command } from "@/types/commands";
 
 interface PlotterControlsProps {
   durationMs: number | null;
   setDurationMs: (v: number | null) => void;
   streaming: boolean;
   status: string;
-  sendCommand: (cmd: any) => void;
+  sendCommand: (cmd: Command) => void;
   sampleRate: number;
   handleClear: () => void;
   live: boolean;
@@ -32,6 +34,7 @@ interface PlotterControlsProps {
   setFitAll: (v: boolean) => void;
   windowSize: number;
   setWindowSize: (v: number) => void;
+  plotMode: PlotModes;
 }
 
 export function PlotterControls({
@@ -48,6 +51,7 @@ export function PlotterControls({
   setFitAll,
   windowSize,
   setWindowSize,
+  plotMode,
 }: PlotterControlsProps) {
   return (
     <>
@@ -97,61 +101,65 @@ export function PlotterControls({
         >
           <StopIcon data-icon="inline-start" />
         </Button>
-        <Separator orientation="vertical" className="h-6" />
+        <Separator orientation="vertical" />
         <Button variant="secondary" onClick={handleClear}>
           Clear
         </Button>
       </div>
 
-      <Separator orientation="vertical" className="h-6" />
+      <Separator orientation="vertical" />
 
-      <div className="flex items-center gap-2">
-        <Label
-          title="Lock view to the latest N samples and auto-scroll as new data arrives"
-          className="gap-1.5"
-        >
-          <Checkbox
-            checked={live}
-            onCheckedChange={(checked) => setLive(checked === true)}
+      {plotMode === "time" ? (
+        <div className="flex items-center gap-2">
+          <Label
+            title="Lock view to the latest N samples and auto-scroll as new data arrives"
+            className="gap-1.5"
+          >
+            <Checkbox
+              checked={live}
+              onCheckedChange={(checked) => setLive(checked === true)}
+            />
+            Live
+          </Label>
+          <Label
+            title="Always show all recorded data while streaming (zoom/pan disabled)"
+            className="gap-1.5"
+          >
+            <Checkbox
+              checked={fitAll}
+              disabled={!live}
+              onCheckedChange={(checked) => setFitAll(checked === true)}
+            />
+            Fit all
+          </Label>
+          <Slider
+            title="Live window size"
+            value={[windowSize]}
+            onValueChange={([v]) => setWindowSize(v)}
+            min={LIVE_WINDOW_MIN}
+            max={LIVE_WINDOW_MAX}
+            step={LIVE_WINDOW_STEP_SIZE}
+            disabled={!live || fitAll}
+            className="w-32"
           />
-          Live
-        </Label>
-        <Label
-          title="Always show all recorded data while streaming (zoom/pan disabled)"
-          className="gap-1.5"
-        >
-          <Checkbox
-            checked={fitAll}
-            disabled={!live}
-            onCheckedChange={(checked) => setFitAll(checked === true)}
+          <Input
+            id="window-size-input"
+            type="number"
+            min={LIVE_WINDOW_MIN}
+            max={LIVE_WINDOW_MAX}
+            step={LIVE_WINDOW_STEP_SIZE}
+            value={[windowSize].toString()}
+            disabled={!live || fitAll}
+            onChange={(e) =>
+              setWindowSize(Number(e.target.value) || LIVE_WINDOW_MIN)
+            }
+            className="w-24"
           />
-          Fit all
-        </Label>
-        <Slider
-          title="Live window size"
-          value={[windowSize]}
-          onValueChange={([v]) => setWindowSize(v)}
-          min={LIVE_WINDOW_MIN}
-          max={LIVE_WINDOW_MAX}
-          step={LIVE_WINDOW_STEP_SIZE}
-          disabled={!live || fitAll}
-          className="w-32"
-        />
-        <Input
-          id="window-size-input"
-          type="number"
-          min={LIVE_WINDOW_MIN}
-          max={LIVE_WINDOW_MAX}
-          step={LIVE_WINDOW_STEP_SIZE}
-          value={[windowSize].toString()}
-          disabled={!live || fitAll}
-          onChange={(e) =>
-            setWindowSize(Number(e.target.value) || LIVE_WINDOW_MIN)
-          }
-          className="w-24"
-        />
-        <span className="text-xs text-muted-foreground">samples</span>
-      </div>
+          <span className="text-xs text-muted-foreground">samples</span>
+        </div>
+      ) : (
+        <></>
+      )}
     </>
   );
 }

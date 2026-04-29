@@ -277,6 +277,7 @@ function App() {
           setFitAll={setFitAll}
           windowSize={windowSize}
           setWindowSize={setWindowSize}
+          plotMode={plotMode}
         />
 
         <div className="ml-auto flex items-center gap-2">

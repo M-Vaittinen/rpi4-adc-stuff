@@ -335,29 +335,45 @@ export function WGLPlot({
         ctx2.fillRect(0, 0, W, H);
 
         if (count >= 2) {
-          const { xMin, xMax } = view;
           const pl = PAD.l * dpr,
             pb = PAD.b * dpr,
             pt = PAD.t * dpr,
             pr = PAD.r * dpr;
           const pw = W - pl - pr;
 
-          const drawFirst = Math.max(0, Math.floor(xMin));
-          const drawLast = Math.min(count - 1, Math.ceil(xMax));
-          const drawCount = drawLast - drawFirst + 1;
+          switch (plotMode) {
+            case "time":
+              {
+                const { xMin, xMax } = view;
 
-          if (drawCount > 0) {
-            gl.viewport(pl, pb, pw, H - pt - PAD.b * dpr);
-            gl.useProgram(prog);
-            gl.uniform1i(locs.iOffset, drawFirst);
-            gl.uniform1f(locs.xMin, xMin - drawFirst);
-            gl.uniform1f(locs.xMax, xMax - drawFirst);
-            gl.uniform1f(locs.yMin, 0);
-            gl.uniform1f(locs.yMax, adcMax);
-            gl.uniform3fv(locs.color, [57 / 255, 255 / 255, 110 / 255]);
-            gl.bindVertexArray(vao);
-            gl.drawArrays(gl.LINE_STRIP, drawFirst, drawCount);
-            gl.bindVertexArray(null);
+                const drawFirst = Math.max(0, Math.floor(xMin));
+                const drawLast = Math.min(count - 1, Math.ceil(xMax));
+                const drawCount = drawLast - drawFirst + 1;
+
+                if (drawCount > 0) {
+                  gl.viewport(pl, pb, pw, H - pt - PAD.b * dpr);
+                  gl.useProgram(prog);
+                  gl.uniform1i(locs.iOffset, drawFirst);
+                  gl.uniform1f(locs.xMin, xMin - drawFirst);
+                  gl.uniform1f(locs.xMax, xMax - drawFirst);
+                  gl.uniform1f(locs.yMin, 0);
+                  gl.uniform1f(locs.yMax, adcMax);
+                  gl.uniform3fv(locs.color, [57 / 255, 255 / 255, 110 / 255]);
+                  gl.bindVertexArray(vao);
+                  gl.drawArrays(gl.LINE_STRIP, drawFirst, drawCount);
+                  gl.bindVertexArray(null);
+                }
+              }
+
+              break;
+
+            case "fft": {
+              console.log("fft mode");
+              break;
+            }
+
+            default:
+              break;
           }
         }
 
@@ -431,7 +447,16 @@ export function WGLPlot({
       axisCanvas.remove();
       hoverCanvas.remove();
     };
-  }, [dataRef, live, windowSize, sampleRate, adcMax, y_scale, voltageRef]);
+  }, [
+    dataRef,
+    live,
+    windowSize,
+    sampleRate,
+    adcMax,
+    y_scale,
+    voltageRef,
+    plotMode,
+  ]);
 
   return (
     <div
