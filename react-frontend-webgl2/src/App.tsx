@@ -1,5 +1,5 @@
 import { useRef, useCallback, useState, type WheelEvent } from "react";
-import type { PlotData, YScale } from "./types";
+import type { PlotModes, PlotData, YScale } from "./types";
 import { useWebSocket, type ParsedFrame } from "./hooks/useWebSocket";
 import { WGLPlot } from "./components/WGLPlot";
 import { StatusDot } from "./components/StatusDot";
@@ -57,6 +57,7 @@ function App() {
   const [durationMs, setDurationMs] = useState<number | null>(null);
   // y-scale: "voltage" | "raw"
   const [yScale, setYScale] = useState<YScale>("raw");
+  const [plotMode, setPlotMode] = useState<PlotModes>("time");
 
   // const [elapsedMs, setElapsedMs] = useState<number | null>(null);
   // const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -256,7 +257,7 @@ function App() {
         live={live}
         fitAll={fitAll}
         windowSize={windowSize}
-        plotMode="fft"
+        plotMode={plotMode}
         y_scale={yScale}
         voltageRef={refVoltage}
       />
@@ -289,6 +290,8 @@ function App() {
             streaming={streaming}
             yScale={yScale}
             setYScale={setYScale}
+            plotMode={plotMode}
+            setPlotMode={setPlotMode}
           />
         </div>
       </div>

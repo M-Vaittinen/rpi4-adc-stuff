@@ -17,7 +17,7 @@ import {
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { ADC_OPTIONS, REF_VOLTAGE_OPTIONS } from "@/config/constants";
-import type { YScale } from "@/types";
+import type { PlotModes, YScale } from "@/types";
 
 export function SettingsSheet({
   adcMax,
@@ -29,6 +29,8 @@ export function SettingsSheet({
   streaming,
   yScale,
   setYScale,
+  plotMode,
+  setPlotMode,
 }: {
   adcMax: number;
   setAdcMax: (v: number) => void;
@@ -39,6 +41,8 @@ export function SettingsSheet({
   streaming: boolean;
   yScale: YScale;
   setYScale: (v: YScale) => void;
+  plotMode: PlotModes;
+  setPlotMode: (v: PlotModes) => void;
 }) {
   return (
     <Sheet>
@@ -79,7 +83,7 @@ export function SettingsSheet({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="raw">Raw value</SelectItem>
+              <SelectItem value="raw">Raw Value</SelectItem>
               <SelectItem value="voltage">Voltage</SelectItem>
             </SelectContent>
           </Select>
@@ -121,6 +125,21 @@ export function SettingsSheet({
             className="w-32 h-8 text-sm"
             disabled={streaming}
           />
+          <Label htmlFor="plotmode" className="text-sm">
+            Plot Mode
+          </Label>
+          <Select
+            value={plotMode}
+            onValueChange={(v) => setPlotMode(v as PlotModes)}
+          >
+            <SelectTrigger id="plotmode-select" className="w-32 h-8 text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="time">Time</SelectItem>
+              <SelectItem value="fft">FFT</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </SheetContent>
     </Sheet>
