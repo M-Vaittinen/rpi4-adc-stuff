@@ -156,10 +156,15 @@ function App() {
     );
   }
 
+  function handlePlotModeChange(mode: PlotModes) {
+    setPlotMode(mode);
+    if (mode === "fft") setLive(false);
+  }
+
   return (
     <div className="flex h-screen flex-col p-4">
       <div className="flex h-5 items-center gap-2 mb-4 text-xs text-muted-foreground">
-        <span>ADC Plotter v{APP_VERSION}</span>{" "}
+        <span>ADC Plotter v{APP_VERSION}</span>
         <Separator orientation="vertical" />
         <StatusDot status={status} streaming={streaming} />
         status:
@@ -292,7 +297,7 @@ function App() {
             yScale={yScale}
             setYScale={setYScale}
             plotMode={plotMode}
-            setPlotMode={setPlotMode}
+            setPlotMode={handlePlotModeChange}
           />
         </div>
       </div>

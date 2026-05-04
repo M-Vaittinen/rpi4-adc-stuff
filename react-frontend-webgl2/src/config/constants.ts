@@ -38,3 +38,7 @@ export const REF_VOLTAGE_OPTIONS = [
 ];
 
 export const DEFAULT_REF_VOLTAGE = REF_VOLTAGE_OPTIONS[0].value;
+
+// FFT defaults
+export const DEFAULT_FFT_SIZE = 8192; // must be a power of 2
+export const FFT_DB_FLOOR = -120; // dB floor for magnitude display

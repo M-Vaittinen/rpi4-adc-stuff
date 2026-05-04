@@ -122,7 +122,7 @@ def chunks_to_bytes(chunks: list) -> bytes:
 
 
 # ── Simulation data generator ─────────────────────────────────────────────────
-def generate_sim_batch(t_offset: float) -> bytes:
+def generate_sim_batch(t_offset: float, rate_hz: int = VIRTUAL_RATE) -> bytes:
     """Generate one simulated mvaring chunk in the same binary format as real data.
 
     Output binary layout (identical to struct adc_data serialised LE):
@@ -137,7 +137,7 @@ def generate_sim_batch(t_offset: float) -> bytes:
     usecs = int(t_offset * 1_000_000) & 0xFFFF_FFFF
     samples = []
     for i in range(MAX_SAMPS):
-        t = t_offset + i / VIRTUAL_RATE
+        t = t_offset + i / rate_hz
         drift    = 150 * math.sin(2 * math.pi * 0.05 * t)
         periodic = 250 * math.sin(2 * math.pi * 1.2  * t)
         harmonic =  60 * math.sin(2 * math.pi * 3.6  * t)
@@ -277,21 +277,30 @@ async def ws_handler(request):
         finally:
             mvaring.close(handle)
 
-    async def stream_sim():
+    async def stream_sim(rate_hz: int):
         """Generate simulated ADC data in the same binary format as real mvaring chunks."""
+        # Batch multiple chunks per send (same as RING_READ_CHUNKS for real ADC)
+        # so the send rate stays manageable at high sample rates.
+        chunks_per_send = max(1, rate_hz // (MAX_SAMPS * 50))  # target ~50 sends/sec
+        samples_per_send = MAX_SAMPS * chunks_per_send
+        send_interval = samples_per_send / rate_hz  # seconds between sends
         sample_counter = 0
         try:
             loop      = asyncio.get_event_loop()
             next_send = loop.time()
             while True:
-                t_offset  = sample_counter / VIRTUAL_RATE
-                batch     = generate_sim_batch(t_offset)
-                await ws.send_bytes(batch)
-                sample_counter += MAX_SAMPS
-                next_send      += MAX_SAMPS / VIRTUAL_RATE
-                delay = next_send - loop.time()
-                if delay > 0:
-                    await asyncio.sleep(delay)
+                payload = b"".join(
+                    generate_sim_batch(
+                        (sample_counter + i * MAX_SAMPS) / rate_hz,
+                        rate_hz,
+                    )
+                    for i in range(chunks_per_send)
+                )
+                await ws.send_bytes(payload)
+                sample_counter += samples_per_send
+                next_send      += send_interval
+                # Always sleep (even 0) so the event loop can process stop/duration.
+                await asyncio.sleep(max(0.0, next_send - loop.time()))
         except asyncio.CancelledError:
             pass
 
@@ -332,13 +341,14 @@ async def ws_handler(request):
                 continue
 
             if cmd_name == "start" and not streaming:
-                sample_rate = data.get("sampleRate", 0) // 1000  # frontend sends Hz; -r expects kHz
+                sample_rate_hz  = data.get("sampleRate", 0) or VIRTUAL_RATE
+                sample_rate     = sample_rate_hz // 1000  # -r expects kHz
                 duration_ms = data.get("durationMs")  # None = stream indefinitely
                 t_stream_start = time.perf_counter()
                 streaming = True
                 if USE_SIM:
-                    task = asyncio.create_task(stream_sim())
-                    log.info("Streaming started (simulation)")
+                    task = asyncio.create_task(stream_sim(sample_rate_hz))
+                    log.info("Streaming started (simulation, %d Hz)", sample_rate_hz)
                 else:
                     streamer_cmd = ["sudo", "stdbuf", "-o0", STREAMER_PROGRAM, "-c"]
                     if sample_rate:
